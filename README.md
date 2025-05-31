@@ -6,6 +6,17 @@ Un juego profesional tipo Minecraft construido con Three.js, optimizado para ren
 
 [Jugar ahora](https://drakeone.github.io/minecraft-ai-voxel/)
 
+## 🆕 Actualización Mayor - Arquitectura Modular
+
+El proyecto ha sido completamente refactorizado con una arquitectura modular profesional:
+
+- ✅ **Código Modular** - Separado en módulos ES6 organizados
+- ✅ **Física Corregida** - Sin más bugs de salto infinito
+- ✅ **Face Culling Arreglado** - Renderizado correcto de caras
+- ✅ **Frustum Culling** - Optimización de renderizado mejorada
+
+Ver [REFACTORING_COMPLETE.md](REFACTORING_COMPLETE.md) para detalles.
+
 ## 📊 Análisis Profesional
 
 Se ha realizado un análisis técnico exhaustivo del proyecto. Consulta los siguientes documentos:
@@ -20,7 +31,7 @@ Se ha realizado un análisis técnico exhaustivo del proyecto. Consulta los sigu
 ### 🎯 Gameplay
 - **Mundo voxel infinito** con generación procedural de chunks
 - **Sistema de construcción/destrucción** de bloques
-- **Física realista** con gravedad y salto
+- **Física realista** con gravedad y salto (corregida)
 - **Controles FPS** fluidos con captura de mouse
 
 ### 📱 Optimización Móvil
@@ -30,18 +41,37 @@ Se ha realizado un análisis técnico exhaustivo del proyecto. Consulta los sigu
 - **Interfaz adaptativa** que detecta dispositivos móviles
 
 ### ⚡ Optimizaciones de Rendimiento
-- **Culling de caras ocultas** - Solo renderiza caras visibles
+- **Frustum Culling** - Solo renderiza chunks en el campo de visión
+- **Face Culling** - Solo renderiza caras visibles
 - **Gestión eficiente de chunks** - Carga/descarga dinámica basada en distancia
 - **Geometría combinada** - Reduce draw calls mediante mesh merging
 - **Vertex colors** en lugar de texturas para mejor rendimiento
-- **LOD implícito** mediante distancia de renderizado configurable
 
 ### 🛠️ Características Técnicas
 - **Three.js r128** para gráficos 3D
-- **Sin dependencias externas** - Todo en un solo archivo HTML
+- **Arquitectura modular** con ES6 modules
 - **Compatible con GitHub Pages**
 - **Responsive design** para cualquier tamaño de pantalla
 - **60 FPS objetivo** con contador de rendimiento
+
+## 🏗️ Estructura del Proyecto
+
+```
+minecraft-ai-voxel/
+├── index.html          # Entrada principal (minimalista)
+├── css/
+│   └── styles.css      # Todos los estilos
+└── js/
+    ├── config.js       # Configuración global
+    ├── main.js         # Inicialización y game loop
+    ├── world/
+    │   ├── World.js    # Gestión del mundo y frustum culling
+    │   └── Chunk.js    # Generación y renderizado de chunks
+    ├── player/
+    │   └── Player.js   # Física y controles del jugador
+    └── input/
+        └── InputHandler.js # Manejo de entrada (teclado/mouse/touch)
+```
 
 ## 🎮 Controles
 
@@ -60,30 +90,6 @@ Se ha realizado un análisis técnico exhaustivo del proyecto. Consulta los sigu
 - **Botón BREAK** - Romper bloque
 - **Botón PLACE** - Colocar bloque
 
-## 🏗️ Arquitectura
-
-### Sistema de Chunks
-```javascript
-- Tamaño de chunk: 16x16x16 bloques
-- Distancia de renderizado: 4 chunks
-- Carga/descarga dinámica
-- Culling de caras por chunk
-```
-
-### Tipos de Bloques
-- **Aire** (0) - Espacio vacío
-- **Césped** (1) - Bloque verde
-- **Tierra** (2) - Bloque marrón
-- **Piedra** (3) - Bloque gris
-- **Madera** (4) - Bloque marrón oscuro
-
-### Optimizaciones Implementadas
-1. **Frustum Culling** - Solo renderiza chunks visibles
-2. **Face Culling** - Solo renderiza caras expuestas al aire
-3. **Mesh Merging** - Combina geometría por chunk
-4. **Object Pooling** - Reutiliza objetos para reducir GC
-5. **Efficient Data Structures** - Uint8Array para almacenamiento de bloques
-
 ## 🚀 Instalación y Uso
 
 1. **Clonar el repositorio**
@@ -93,12 +99,11 @@ git clone https://github.com/DrakeOne/minecraft-ai-voxel.git
 
 2. **Abrir localmente**
 ```bash
-# Opción 1: Abrir directamente el archivo
-open index.html
-
-# Opción 2: Usar un servidor local
+# Opción 1: Usar un servidor local (recomendado para módulos ES6)
 python -m http.server 8000
 # Luego visitar http://localhost:8000
+
+# Opción 2: Usar Live Server en VS Code
 ```
 
 3. **Deploy en GitHub Pages**
@@ -109,10 +114,10 @@ python -m http.server 8000
 
 ## 🔧 Configuración
 
-Puedes ajustar la configuración del juego modificando el objeto `config`:
+Puedes ajustar la configuración del juego modificando `js/config.js`:
 
 ```javascript
-const config = {
+export const config = {
     chunkSize: 16,          // Tamaño de cada chunk
     renderDistance: 4,      // Chunks a renderizar
     blockSize: 1,          // Tamaño de cada bloque
@@ -125,15 +130,15 @@ const config = {
 
 ## 📈 Roadmap Futuro
 
-- [ ] Más tipos de bloques con texturas
+- [ ] Implementar Greedy Meshing (reducción 60-80% de geometría)
 - [ ] Sistema de inventario
+- [ ] Más tipos de bloques con texturas
 - [ ] Generación de terreno más compleja
 - [ ] Iluminación dinámica
-- [ ] Multijugador básico
-- [ ] Sonidos y música
 - [ ] Sistema de crafteo
 - [ ] Guardado/carga de mundos
-- [ ] Mobs y entidades
+- [ ] Sonidos y música
+- [ ] Multijugador básico
 - [ ] Ciclo día/noche
 
 ## 🤝 Contribuciones
