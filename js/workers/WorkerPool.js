@@ -1,18 +1,13 @@
-/**
- * Worker Pool Manager
- * Manages a pool of web workers for parallel processing
- */
+// DEBUG: Agrega logs exhaustivos en cada función clave
 export class WorkerPool {
     constructor(workerScript, poolSize = navigator.hardwareConcurrency || 4) {
         this.workerScript = workerScript;
-        this.poolSize = Math.min(poolSize, 8); // Cap at 8 workers
+        this.poolSize = Math.min(poolSize, 8);
         this.workers = [];
         this.availableWorkers = [];
         this.taskQueue = [];
         this.activeJobs = new Map();
         this.jobIdCounter = 0;
-        
-        // Statistics
         this.stats = {
             totalJobs: 0,
             completedJobs: 0,
@@ -20,13 +15,9 @@ export class WorkerPool {
             averageTime: 0,
             peakQueueSize: 0
         };
-        
         this.initializeWorkers();
     }
 
-    /**
-     * Initialize worker pool
-     */
     initializeWorkers() {
         for (let i = 0; i < this.poolSize; i++) {
             const worker = new Worker(this.workerScript, { type: 'module' });
@@ -36,19 +27,14 @@ export class WorkerPool {
                 busy: false,
                 currentJob: null
             };
-            
-            // Setup message handler
             worker.onmessage = (e) => this.handleWorkerMessage(workerInfo, e);
             worker.onerror = (e) => this.handleWorkerError(workerInfo, e);
-            
             this.workers.push(workerInfo);
             this.availableWorkers.push(workerInfo);
         }
+        console.log('[WorkerPool] Initialized', this.poolSize, 'workers for', this.workerScript);
     }
 
-    /**
-     * Execute a job on the worker pool
-     */
     execute(data, transferables = []) {
         return new Promise((resolve, reject) => {
             const jobId = this.jobIdCounter++;
@@ -62,174 +48,116 @@ export class WorkerPool {
                 retries: 0,
                 maxRetries: 2
             };
-            
             this.stats.totalJobs++;
-            
-            // Try to assign immediately
             const worker = this.getAvailableWorker();
             if (worker) {
                 this.assignJobToWorker(job, worker);
             } else {
-                // Queue the job
                 this.taskQueue.push(job);
                 this.stats.peakQueueSize = Math.max(this.stats.peakQueueSize, this.taskQueue.length);
             }
+            console.log('[WorkerPool] Job enqueued', jobId, 'for', this.workerScript);
         });
     }
 
-    /**
-     * Get an available worker
-     */
     getAvailableWorker() {
         return this.availableWorkers.shift() || null;
     }
 
-    /**
-     * Assign job to worker
-     */
     assignJobToWorker(job, workerInfo) {
         workerInfo.busy = true;
         workerInfo.currentJob = job;
         this.activeJobs.set(job.id, workerInfo);
-        
-        // Send message to worker
         try {
             workerInfo.worker.postMessage({
                 id: job.id,
                 data: job.data
             }, job.transferables);
+            console.log('[WorkerPool] Assign job', job.id, 'to worker', workerInfo.id);
         } catch (error) {
-            // Handle transfer error
             this.handleJobError(job, workerInfo, error);
         }
     }
 
-    /**
-     * Handle message from worker
-     */
     handleWorkerMessage(workerInfo, event) {
         const { id, result, error } = event.data;
         const job = workerInfo.currentJob;
-        
         if (!job || job.id !== id) {
-            console.warn('Received message for unknown job:', id);
+            console.warn('[WorkerPool] Received message for unknown job:', id);
             return;
         }
-        
-        // Calculate job time
         const jobTime = performance.now() - job.startTime;
         this.updateStats(jobTime, !error);
-        
-        // Clean up
         this.activeJobs.delete(job.id);
         workerInfo.busy = false;
         workerInfo.currentJob = null;
-        
-        // Handle result
         if (error) {
             this.handleJobError(job, workerInfo, new Error(error));
         } else {
             job.resolve(result);
             this.stats.completedJobs++;
+            console.log('[WorkerPool] Worker', workerInfo.id, 'completed job', job.id, 'result:', result);
         }
-        
-        // Make worker available again
         this.availableWorkers.push(workerInfo);
-        
-        // Process next job in queue
         this.processQueue();
     }
 
-    /**
-     * Handle worker error
-     */
     handleWorkerError(workerInfo, error) {
-        console.error(`Worker ${workerInfo.id} error:`, error);
-        
+        console.error('[WorkerPool] Worker', workerInfo.id, 'error:', error);
         const job = workerInfo.currentJob;
         if (job) {
             this.handleJobError(job, workerInfo, error);
         }
-        
-        // Restart worker
         this.restartWorker(workerInfo);
     }
 
-    /**
-     * Handle job error with retry logic
-     */
     handleJobError(job, workerInfo, error) {
         job.retries++;
-        
         if (job.retries <= job.maxRetries) {
-            console.warn(`Retrying job ${job.id} (attempt ${job.retries})`);
-            
-            // Reset worker state
+            console.warn('[WorkerPool] Retrying job', job.id, 'attempt', job.retries);
             workerInfo.busy = false;
             workerInfo.currentJob = null;
             this.availableWorkers.push(workerInfo);
-            
-            // Requeue job
             this.taskQueue.unshift(job);
             this.processQueue();
         } else {
-            // Max retries exceeded
             job.reject(error);
             this.stats.failedJobs++;
-            
-            // Clean up
             this.activeJobs.delete(job.id);
             workerInfo.busy = false;
             workerInfo.currentJob = null;
             this.availableWorkers.push(workerInfo);
-            
             this.processQueue();
         }
     }
 
-    /**
-     * Process queued jobs
-     */
     processQueue() {
         while (this.taskQueue.length > 0 && this.availableWorkers.length > 0) {
             const job = this.taskQueue.shift();
             const worker = this.getAvailableWorker();
-            
             if (worker) {
                 this.assignJobToWorker(job, worker);
             } else {
-                // Put job back
                 this.taskQueue.unshift(job);
                 break;
             }
         }
     }
 
-    /**
-     * Restart a worker
-     */
     restartWorker(workerInfo) {
-        // Terminate old worker
         workerInfo.worker.terminate();
-        
-        // Create new worker
         const newWorker = new Worker(this.workerScript, { type: 'module' });
         newWorker.onmessage = (e) => this.handleWorkerMessage(workerInfo, e);
         newWorker.onerror = (e) => this.handleWorkerError(workerInfo, e);
-        
         workerInfo.worker = newWorker;
         workerInfo.busy = false;
         workerInfo.currentJob = null;
-        
-        // Make available if not already
         if (!this.availableWorkers.includes(workerInfo)) {
             this.availableWorkers.push(workerInfo);
         }
+        console.warn('[WorkerPool] Restarting worker', workerInfo.id);
     }
 
-    /**
-     * Update statistics
-     */
     updateStats(jobTime, success) {
         if (success) {
             const totalTime = this.stats.averageTime * this.stats.completedJobs + jobTime;
@@ -237,9 +165,6 @@ export class WorkerPool {
         }
     }
 
-    /**
-     * Get pool statistics
-     */
     getStats() {
         return {
             ...this.stats,
@@ -250,41 +175,27 @@ export class WorkerPool {
         };
     }
 
-    /**
-     * Terminate all workers
-     */
     terminate() {
-        // Cancel all pending jobs
         for (const job of this.taskQueue) {
             job.reject(new Error('Worker pool terminated'));
         }
         this.taskQueue = [];
-        
-        // Cancel active jobs
         for (const [jobId, workerInfo] of this.activeJobs) {
             if (workerInfo.currentJob) {
                 workerInfo.currentJob.reject(new Error('Worker pool terminated'));
             }
         }
         this.activeJobs.clear();
-        
-        // Terminate all workers
         for (const workerInfo of this.workers) {
             workerInfo.worker.terminate();
         }
-        
         this.workers = [];
         this.availableWorkers = [];
     }
 
-    /**
-     * Resize the worker pool
-     */
     resize(newSize) {
-        newSize = Math.min(Math.max(1, newSize), 16); // Clamp between 1 and 16
-        
+        newSize = Math.min(Math.max(1, newSize), 16);
         if (newSize > this.poolSize) {
-            // Add workers
             for (let i = this.poolSize; i < newSize; i++) {
                 const worker = new Worker(this.workerScript, { type: 'module' });
                 const workerInfo = {
@@ -293,24 +204,18 @@ export class WorkerPool {
                     busy: false,
                     currentJob: null
                 };
-                
                 worker.onmessage = (e) => this.handleWorkerMessage(workerInfo, e);
                 worker.onerror = (e) => this.handleWorkerError(workerInfo, e);
-                
                 this.workers.push(workerInfo);
                 this.availableWorkers.push(workerInfo);
             }
         } else if (newSize < this.poolSize) {
-            // Remove workers
             const toRemove = this.poolSize - newSize;
             for (let i = 0; i < toRemove; i++) {
-                // Try to remove idle workers first
                 const idleIndex = this.workers.findIndex(w => !w.busy && w.id >= newSize);
                 if (idleIndex !== -1) {
                     const worker = this.workers.splice(idleIndex, 1)[0];
                     worker.worker.terminate();
-                    
-                    // Remove from available list
                     const availIndex = this.availableWorkers.indexOf(worker);
                     if (availIndex !== -1) {
                         this.availableWorkers.splice(availIndex, 1);
@@ -318,19 +223,14 @@ export class WorkerPool {
                 }
             }
         }
-        
         this.poolSize = this.workers.length;
     }
 
-    /**
-     * Execute batch of jobs
-     */
     async executeBatch(jobs, transferables = []) {
         const promises = jobs.map((job, index) => {
             const transfer = transferables[index] || [];
             return this.execute(job, transfer);
         });
-        
         return Promise.all(promises);
     }
 }
