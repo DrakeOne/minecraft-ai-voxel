@@ -78,6 +78,19 @@
                 workerStatus.textContent = `Workers: ${window.gameStats.workerStatus}`;
             }
         }, 1000);
+        
+        // Initialize checkbox state
+        window.addEventListener('load', () => {
+            const checkbox = document.getElementById('toggleWorkers');
+            if (checkbox) {
+                // Set initial state from config if available
+                setTimeout(() => {
+                    if (window.config && window.config.features) {
+                        checkbox.checked = window.config.features.useWorkers;
+                    }
+                }, 500);
+            }
+        });
     </script>
 </body>
 </html>
