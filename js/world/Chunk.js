@@ -204,20 +204,22 @@ export class Chunk {
                 normal = [-1, 0, 0];
                 break;
             case 'front':
+                // FIXED: Corrected winding order for front face
                 faceVertices = [
-                    [x - half, y - half, z + half],
-                    [x - half, y + half, z + half],
+                    [x + half, y - half, z + half],
                     [x + half, y + half, z + half],
-                    [x + half, y - half, z + half]
+                    [x - half, y + half, z + half],
+                    [x - half, y - half, z + half]
                 ];
                 normal = [0, 0, 1];
                 break;
             case 'back':
+                // FIXED: Corrected winding order for back face
                 faceVertices = [
-                    [x + half, y - half, z - half],
-                    [x + half, y + half, z - half],
+                    [x - half, y - half, z - half],
                     [x - half, y + half, z - half],
-                    [x - half, y - half, z - half]
+                    [x + half, y + half, z - half],
+                    [x + half, y - half, z - half]
                 ];
                 normal = [0, 0, -1];
                 break;
