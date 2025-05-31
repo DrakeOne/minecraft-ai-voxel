@@ -60,6 +60,14 @@
             color: yellow;
         }
         
+        #flyMode {
+            top: 70px;
+            left: 10px;
+            font-size: clamp(10px, 1.8vw, 12px);
+            color: #00ff00;
+            display: none;
+        }
+        
         #crosshair {
             position: absolute;
             top: 50%;
@@ -167,6 +175,11 @@
             transform: scale(0.95);
         }
         
+        .action-btn.active {
+            background: rgba(100,255,100,0.3);
+            border-color: rgba(100,255,100,0.6);
+        }
+        
         /* Loading Screen */
         #loading {
             position: fixed;
@@ -230,6 +243,7 @@
     <div id="fps" class="hud">FPS: 0</div>
     <div id="coords" class="hud">X: 0 Y: 0 Z: 0</div>
     <div id="debug" class="hud">Faces: 0</div>
+    <div id="flyMode" class="hud">✈️ FLY MODE</div>
     <div id="crosshair"></div>
     
     <!-- Mobile Controls -->
@@ -239,6 +253,7 @@
     
     <div class="action-buttons mobile-controls">
         <button class="action-btn" id="jumpBtn">JUMP</button>
+        <button class="action-btn" id="flyBtn">FLY</button>
         <button class="action-btn" id="placeBtn">PLACE</button>
         <button class="action-btn" id="breakBtn">BREAK</button>
     </div>
@@ -267,6 +282,7 @@
             gravity: -20,
             jumpVelocity: 10,
             moveSpeed: 5,
+            flySpeed: 20, // 4x faster than normal
             mouseSensitivity: 0.002,
             mobileMoveSensitivity: 0.02
         };
@@ -617,56 +633,49 @@
             addFace(vertices, normals, colors, x, y, z, dir, faceName, color) {
                 const half = config.blockSize / 2;
 
-                // Face vertices with CORRECT winding order for backface culling
-                // Counter-clockwise when viewed from outside the cube
+                // Face vertices based on direction (ORIGINAL WORKING VERSION)
                 let faceVertices;
-                if (faceName === 'top') {
-                    // Looking down at the top face (from +Y)
+                if (dir[1] === 1) { // top
                     faceVertices = [
-                        [x - half, y + half, z - half], // 0: back-left
-                        [x + half, y + half, z - half], // 1: back-right
-                        [x + half, y + half, z + half], // 2: front-right
-                        [x - half, y + half, z + half]  // 3: front-left
+                        [x - half, y + half, z - half],
+                        [x + half, y + half, z - half],
+                        [x + half, y + half, z + half],
+                        [x - half, y + half, z + half]
                     ];
-                } else if (faceName === 'bottom') {
-                    // Looking up at the bottom face (from -Y)
+                } else if (dir[1] === -1) { // bottom
                     faceVertices = [
-                        [x - half, y - half, z + half], // 0: front-left
-                        [x + half, y - half, z + half], // 1: front-right
-                        [x + half, y - half, z - half], // 2: back-right
-                        [x - half, y - half, z - half]  // 3: back-left
+                        [x - half, y - half, z + half],
+                        [x + half, y - half, z + half],
+                        [x + half, y - half, z - half],
+                        [x - half, y - half, z - half]
                     ];
-                } else if (faceName === 'right') {
-                    // Looking at the right face from outside (from +X)
+                } else if (dir[0] === 1) { // right
                     faceVertices = [
-                        [x + half, y - half, z - half], // 0: bottom-back
-                        [x + half, y - half, z + half], // 1: bottom-front
-                        [x + half, y + half, z + half], // 2: top-front
-                        [x + half, y + half, z - half]  // 3: top-back
+                        [x + half, y - half, z - half],
+                        [x + half, y - half, z + half],
+                        [x + half, y + half, z + half],
+                        [x + half, y + half, z - half]
                     ];
-                } else if (faceName === 'left') {
-                    // Looking at the left face from outside (from -X)
+                } else if (dir[0] === -1) { // left
                     faceVertices = [
-                        [x - half, y - half, z + half], // 0: bottom-front
-                        [x - half, y - half, z - half], // 1: bottom-back
-                        [x - half, y + half, z - half], // 2: top-back
-                        [x - half, y + half, z + half]  // 3: top-front
+                        [x - half, y - half, z + half],
+                        [x - half, y - half, z - half],
+                        [x - half, y + half, z - half],
+                        [x - half, y + half, z + half]
                     ];
-                } else if (faceName === 'front') {
-                    // Looking at the front face (from +Z)
+                } else if (dir[2] === 1) { // front
                     faceVertices = [
-                        [x - half, y - half, z + half], // 0: bottom-left
-                        [x + half, y - half, z + half], // 1: bottom-right
-                        [x + half, y + half, z + half], // 2: top-right
-                        [x - half, y + half, z + half]  // 3: top-left
+                        [x - half, y - half, z + half],
+                        [x + half, y - half, z + half],
+                        [x + half, y + half, z + half],
+                        [x - half, y + half, z + half]
                     ];
-                } else if (faceName === 'back') {
-                    // Looking at the back face (from -Z)
+                } else { // back
                     faceVertices = [
-                        [x + half, y - half, z - half], // 0: bottom-right
-                        [x - half, y - half, z - half], // 1: bottom-left
-                        [x - half, y + half, z - half], // 2: top-left
-                        [x + half, y + half, z - half]  // 3: top-right
+                        [x + half, y - half, z - half],
+                        [x - half, y - half, z - half],
+                        [x - half, y + half, z - half],
+                        [x + half, y + half, z - half]
                     ];
                 }
 
@@ -689,13 +698,14 @@
                 this.velocity = new THREE.Vector3(0, 0, 0);
                 this.rotation = new THREE.Euler(0, 0, 0, 'YXZ');
                 this.isGrounded = false;
+                this.isFlying = false;
                 this.height = 1.8;
                 this.radius = 0.3;
             }
 
             update(deltaTime, world) {
-                // Apply gravity
-                if (!this.isGrounded) {
+                // Apply gravity only if not flying
+                if (!this.isFlying && !this.isGrounded) {
                     this.velocity.y += config.gravity * deltaTime;
                 }
 
@@ -704,14 +714,16 @@
                     this.velocity.clone().multiplyScalar(deltaTime)
                 );
 
-                // Simple collision detection
-                const groundY = this.checkGround(world, newPos.x, newPos.z);
-                if (newPos.y <= groundY + this.height) {
-                    newPos.y = groundY + this.height;
-                    this.velocity.y = 0;
-                    this.isGrounded = true;
-                } else {
-                    this.isGrounded = false;
+                // Simple collision detection (disabled when flying)
+                if (!this.isFlying) {
+                    const groundY = this.checkGround(world, newPos.x, newPos.z);
+                    if (newPos.y <= groundY + this.height) {
+                        newPos.y = groundY + this.height;
+                        this.velocity.y = 0;
+                        this.isGrounded = true;
+                    } else {
+                        this.isGrounded = false;
+                    }
                 }
 
                 this.position.copy(newPos);
@@ -732,41 +744,69 @@
             }
 
             jump() {
-                if (this.isGrounded) {
+                if (this.isGrounded && !this.isFlying) {
                     this.velocity.y = config.jumpVelocity;
                     this.isGrounded = false;
                 }
             }
 
-            move(forward, right) {
+            toggleFly() {
+                this.isFlying = !this.isFlying;
+                if (this.isFlying) {
+                    this.velocity.y = 0; // Stop falling when entering fly mode
+                    document.getElementById('flyMode').style.display = 'block';
+                    document.getElementById('flyBtn').classList.add('active');
+                } else {
+                    document.getElementById('flyMode').style.display = 'none';
+                    document.getElementById('flyBtn').classList.remove('active');
+                }
+            }
+
+            move(forward, right, up = 0) {
                 const moveVector = new THREE.Vector3();
+                const speed = this.isFlying ? config.flySpeed : config.moveSpeed;
                 
                 // Calculate movement direction
                 const forwardVector = new THREE.Vector3(0, 0, -1);
                 forwardVector.applyQuaternion(camera.quaternion);
-                forwardVector.y = 0;
+                if (!this.isFlying) {
+                    forwardVector.y = 0;
+                }
                 forwardVector.normalize();
 
                 const rightVector = new THREE.Vector3(1, 0, 0);
                 rightVector.applyQuaternion(camera.quaternion);
-                rightVector.y = 0;
+                if (!this.isFlying) {
+                    rightVector.y = 0;
+                }
                 rightVector.normalize();
 
                 moveVector.add(forwardVector.multiplyScalar(forward));
                 moveVector.add(rightVector.multiplyScalar(right));
 
+                if (this.isFlying) {
+                    // Add vertical movement in fly mode
+                    moveVector.y += up;
+                }
+
                 if (moveVector.length() > 0) {
                     moveVector.normalize();
-                    this.velocity.x = moveVector.x * config.moveSpeed;
-                    this.velocity.z = moveVector.z * config.moveSpeed;
+                    this.velocity.x = moveVector.x * speed;
+                    this.velocity.z = moveVector.z * speed;
+                    if (this.isFlying) {
+                        this.velocity.y = moveVector.y * speed;
+                    }
                 } else {
                     this.velocity.x = 0;
                     this.velocity.z = 0;
+                    if (this.isFlying) {
+                        this.velocity.y = 0;
+                    }
                 }
             }
         }
 
-        // Input handling
+        // Input handling with multi-touch support
         class InputHandler {
             constructor() {
                 this.keys = {};
@@ -774,6 +814,7 @@
                 this.touches = new Map();
                 this.joystickActive = false;
                 this.joystickVector = { x: 0, y: 0 };
+                this.cameraTouch = null;
 
                 this.setupKeyboard();
                 this.setupMouse();
@@ -784,6 +825,11 @@
             setupKeyboard() {
                 document.addEventListener('keydown', (e) => {
                     this.keys[e.code] = true;
+                    
+                    // Toggle fly mode with F key
+                    if (e.code === 'KeyF') {
+                        player.toggleFly();
+                    }
                 });
 
                 document.addEventListener('keyup', (e) => {
@@ -814,39 +860,63 @@
             }
 
             setupTouch() {
-                let lastTouchX = 0;
-                let lastTouchY = 0;
-
+                // Multi-touch support for camera control
                 canvas.addEventListener('touchstart', (e) => {
-                    if (e.touches.length === 1) {
-                        lastTouchX = e.touches[0].clientX;
-                        lastTouchY = e.touches[0].clientY;
+                    // Find a touch that's not on a control
+                    for (let i = 0; i < e.changedTouches.length; i++) {
+                        const touch = e.changedTouches[i];
+                        const element = document.elementFromPoint(touch.clientX, touch.clientY);
+                        
+                        // If touch is not on a mobile control, use it for camera
+                        if (!element.closest('.mobile-controls')) {
+                            this.cameraTouch = {
+                                id: touch.identifier,
+                                lastX: touch.clientX,
+                                lastY: touch.clientY
+                            };
+                            break;
+                        }
                     }
                 });
 
                 canvas.addEventListener('touchmove', (e) => {
-                    if (e.touches.length === 1) {
-                        const touch = e.touches[0];
-                        const deltaX = touch.clientX - lastTouchX;
-                        const deltaY = touch.clientY - lastTouchY;
+                    if (this.cameraTouch) {
+                        for (let i = 0; i < e.touches.length; i++) {
+                            const touch = e.touches[i];
+                            if (touch.identifier === this.cameraTouch.id) {
+                                const deltaX = touch.clientX - this.cameraTouch.lastX;
+                                const deltaY = touch.clientY - this.cameraTouch.lastY;
 
-                        this.mouseMovement.x += deltaX * 2;
-                        this.mouseMovement.y += deltaY * 2;
+                                this.mouseMovement.x += deltaX * 2;
+                                this.mouseMovement.y += deltaY * 2;
 
-                        lastTouchX = touch.clientX;
-                        lastTouchY = touch.clientY;
+                                this.cameraTouch.lastX = touch.clientX;
+                                this.cameraTouch.lastY = touch.clientY;
+                                break;
+                            }
+                        }
                     }
                     e.preventDefault();
                 }, { passive: false });
+
+                canvas.addEventListener('touchend', (e) => {
+                    // Check if camera touch ended
+                    for (let i = 0; i < e.changedTouches.length; i++) {
+                        if (this.cameraTouch && e.changedTouches[i].identifier === this.cameraTouch.id) {
+                            this.cameraTouch = null;
+                            break;
+                        }
+                    }
+                });
             }
 
             setupMobileControls() {
-                // Joystick
+                // Joystick with multi-touch support
                 const joystick = document.getElementById('joystick');
                 const joystickKnob = document.getElementById('joystick-knob');
+                let joystickTouchId = null;
 
-                const handleJoystick = (e) => {
-                    const touch = e.touches[0];
+                const handleJoystick = (touch) => {
                     const rect = joystick.getBoundingClientRect();
                     const centerX = rect.left + rect.width / 2;
                     const centerY = rect.top + rect.height / 2;
@@ -870,25 +940,44 @@
                 };
 
                 joystick.addEventListener('touchstart', (e) => {
-                    handleJoystick(e);
+                    if (!joystickTouchId && e.changedTouches.length > 0) {
+                        joystickTouchId = e.changedTouches[0].identifier;
+                        handleJoystick(e.changedTouches[0]);
+                    }
                     e.preventDefault();
                 });
 
                 joystick.addEventListener('touchmove', (e) => {
-                    handleJoystick(e);
+                    for (let i = 0; i < e.touches.length; i++) {
+                        if (e.touches[i].identifier === joystickTouchId) {
+                            handleJoystick(e.touches[i]);
+                            break;
+                        }
+                    }
                     e.preventDefault();
                 });
 
-                joystick.addEventListener('touchend', () => {
-                    joystickKnob.style.transform = 'translate(-50%, -50%)';
-                    this.joystickVector.x = 0;
-                    this.joystickVector.y = 0;
-                    this.joystickActive = false;
+                joystick.addEventListener('touchend', (e) => {
+                    for (let i = 0; i < e.changedTouches.length; i++) {
+                        if (e.changedTouches[i].identifier === joystickTouchId) {
+                            joystickKnob.style.transform = 'translate(-50%, -50%)';
+                            this.joystickVector.x = 0;
+                            this.joystickVector.y = 0;
+                            this.joystickActive = false;
+                            joystickTouchId = null;
+                            break;
+                        }
+                    }
                 });
 
-                // Action buttons
+                // Action buttons with multi-touch support
                 document.getElementById('jumpBtn').addEventListener('touchstart', (e) => {
                     player.jump();
+                    e.preventDefault();
+                });
+
+                document.getElementById('flyBtn').addEventListener('touchstart', (e) => {
+                    player.toggleFly();
                     e.preventDefault();
                 });
 
@@ -956,12 +1045,19 @@
             getMovement() {
                 let forward = 0;
                 let right = 0;
+                let up = 0;
 
                 // Keyboard input
                 if (this.keys['KeyW'] || this.keys['ArrowUp']) forward += 1;
                 if (this.keys['KeyS'] || this.keys['ArrowDown']) forward -= 1;
                 if (this.keys['KeyD'] || this.keys['ArrowRight']) right += 1;
                 if (this.keys['KeyA'] || this.keys['ArrowLeft']) right -= 1;
+                
+                // Vertical movement in fly mode
+                if (player.isFlying) {
+                    if (this.keys['Space']) up += 1;
+                    if (this.keys['ShiftLeft'] || this.keys['ShiftRight']) up -= 1;
+                }
 
                 // Joystick input
                 if (this.joystickActive) {
@@ -969,7 +1065,7 @@
                     right += this.joystickVector.x;
                 }
 
-                return { forward, right };
+                return { forward, right, up };
             }
 
             consumeMouseMovement() {
@@ -1016,10 +1112,10 @@
 
             // Update player movement
             const movement = input.getMovement();
-            player.move(movement.forward, movement.right);
+            player.move(movement.forward, movement.right, movement.up);
 
-            // Handle jump
-            if (input.keys['Space']) {
+            // Handle jump (only when not flying)
+            if (input.keys['Space'] && !player.isFlying) {
                 player.jump();
             }
 
