@@ -3,6 +3,7 @@ import { config, stats } from './config.js';
 import { World } from './world/World.js';
 import { Player } from './player/Player.js';
 import { InputHandler } from './input/InputHandler.js';
+import { WorkerManager } from './world/WorkerManager.js';
 
 console.log('[Main] Initializing game with config:', config);
 
@@ -81,6 +82,41 @@ const player = new Player(world);
 
 console.log('[Main] Setting up input handler...');
 const inputHandler = new InputHandler(canvas, player, world, camera, scene);
+
+// Make stats globally accessible for UI
+window.gameStats = stats;
+
+// Listen for worker toggle events
+window.addEventListener('toggleWorkers', (e) => {
+    console.log('[Main] Toggle workers:', e.detail);
+    if (e.detail) {
+        // Enable workers
+        config.features.useWorkers = true;
+        if (!world.workerManager) {
+            world.workerManager = new WorkerManager(world, scene);
+        }
+        // Check if workers initialized successfully
+        setTimeout(() => {
+            if (world.workerManager && world.workerManager.isEnabled()) {
+                stats.workerStatus = 'enabled';
+                console.log('[Main] Workers enabled successfully');
+            } else {
+                stats.workerStatus = 'failed';
+                config.features.useWorkers = false;
+                console.log('[Main] Workers failed to initialize');
+            }
+        }, 1000);
+    } else {
+        // Disable workers
+        config.features.useWorkers = false;
+        if (world.workerManager) {
+            world.workerManager.dispose();
+            world.workerManager = null;
+        }
+        stats.workerStatus = 'disabled';
+        console.log('[Main] Workers disabled');
+    }
+});
 
 // Prevent iOS bounce and ensure proper sizing
 document.addEventListener('gesturestart', e => e.preventDefault());
