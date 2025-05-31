@@ -60,6 +60,14 @@
             color: yellow;
         }
         
+        #flyMode {
+            top: 70px;
+            left: 10px;
+            font-size: clamp(10px, 1.8vw, 12px);
+            color: #00ff00;
+            display: none;
+        }
+        
         #crosshair {
             position: absolute;
             top: 50%;
@@ -109,10 +117,13 @@
             }
         }
         
+        /* Joystick with fallback for older browsers */
         #joystick {
             position: fixed;
-            bottom: calc(20px + env(safe-area-inset-bottom));
-            left: calc(20px + env(safe-area-inset-left));
+            bottom: 20px;
+            bottom: calc(20px + env(safe-area-inset-bottom, 0px));
+            left: 20px;
+            left: calc(20px + env(safe-area-inset-left, 0px));
             width: clamp(100px, 20vw, 120px);
             height: clamp(100px, 20vw, 120px);
             background: rgba(255,255,255,0.1);
@@ -134,8 +145,10 @@
         
         .action-buttons {
             position: fixed;
-            bottom: calc(20px + env(safe-area-inset-bottom));
-            right: calc(20px + env(safe-area-inset-right));
+            bottom: 20px;
+            bottom: calc(20px + env(safe-area-inset-bottom, 0px));
+            right: 20px;
+            right: calc(20px + env(safe-area-inset-right, 0px));
             display: flex;
             gap: clamp(8px, 2vw, 10px);
             flex-direction: column;
@@ -160,6 +173,11 @@
         .action-btn:active {
             background: rgba(255,255,255,0.4);
             transform: scale(0.95);
+        }
+        
+        .action-btn.active {
+            background: rgba(100,255,100,0.3);
+            border-color: rgba(100,255,100,0.6);
         }
         
         /* Loading Screen */
@@ -225,6 +243,7 @@
     <div id="fps" class="hud">FPS: 0</div>
     <div id="coords" class="hud">X: 0 Y: 0 Z: 0</div>
     <div id="debug" class="hud">Faces: 0</div>
+    <div id="flyMode" class="hud">✈️ FLY MODE</div>
     <div id="crosshair"></div>
     
     <!-- Mobile Controls -->
@@ -234,6 +253,7 @@
     
     <div class="action-buttons mobile-controls">
         <button class="action-btn" id="jumpBtn">JUMP</button>
+        <button class="action-btn" id="flyBtn">FLY</button>
         <button class="action-btn" id="placeBtn">PLACE</button>
         <button class="action-btn" id="breakBtn">BREAK</button>
     </div>
@@ -262,6 +282,7 @@
             gravity: -20,
             jumpVelocity: 10,
             moveSpeed: 5,
+            flySpeed: 20, // 4x faster than normal
             mouseSensitivity: 0.002,
             mobileMoveSensitivity: 0.02
         };
@@ -564,4 +585,592 @@
                             faces.forEach(face => {
                                 if (this.shouldRenderFace(x, y, z, face.dir)) {
                                     const startVertex = vertexCount;
-                                    this.ad
+                                    this.addFace(vertices, normals, colors, worldX, worldY, worldZ, face.dir, face.name, color);
+                                    
+                                    // Add indices for the face (2 triangles with correct winding)
+                                    // Counter-clockwise winding when viewed from outside
+                                    indices.push(
+                                        startVertex, startVertex + 1, startVertex + 2,
+                                        startVertex, startVertex + 2, startVertex + 3
+                                    );
+                                    
+                                    vertexCount += 4;
+                                    faceCount++;
+                                }
+                            });
+                        }
+                    }
+                }
+
+                // Update face counter
+                stats.totalFaces = faceCount;
+
+                // Set geometry attributes
+                geometry.setAttribute('position', new THREE.Float32BufferAttribute(vertices, 3));
+                geometry.setAttribute('normal', new THREE.Float32BufferAttribute(normals, 3));
+                geometry.setAttribute('color', new THREE.Float32BufferAttribute(colors, 3));
+                geometry.setIndex(indices);
+                
+                // Compute bounding box for frustum culling
+                geometry.computeBoundingBox();
+                geometry.computeBoundingSphere();
+
+                // Create mesh with proper material settings
+                const material = new THREE.MeshLambertMaterial({ 
+                    vertexColors: true,
+                    side: THREE.FrontSide, // Only render front faces
+                    flatShading: true
+                });
+
+                this.mesh = new THREE.Mesh(geometry, material);
+                this.mesh.matrixAutoUpdate = false;
+                this.mesh.updateMatrix();
+                scene.add(this.mesh);
+
+                this.needsUpdate = false;
+            }
+
+            addFace(vertices, normals, colors, x, y, z, dir, faceName, color) {
+                const half = config.blockSize / 2;
+
+                // Face vertices based on direction (ORIGINAL WORKING VERSION)
+                let faceVertices;
+                if (dir[1] === 1) { // top
+                    faceVertices = [
+                        [x - half, y + half, z - half],
+                        [x + half, y + half, z - half],
+                        [x + half, y + half, z + half],
+                        [x - half, y + half, z + half]
+                    ];
+                } else if (dir[1] === -1) { // bottom
+                    faceVertices = [
+                        [x - half, y - half, z + half],
+                        [x + half, y - half, z + half],
+                        [x + half, y - half, z - half],
+                        [x - half, y - half, z - half]
+                    ];
+                } else if (dir[0] === 1) { // right
+                    faceVertices = [
+                        [x + half, y - half, z - half],
+                        [x + half, y - half, z + half],
+                        [x + half, y + half, z + half],
+                        [x + half, y + half, z - half]
+                    ];
+                } else if (dir[0] === -1) { // left
+                    faceVertices = [
+                        [x - half, y - half, z + half],
+                        [x - half, y - half, z - half],
+                        [x - half, y + half, z - half],
+                        [x - half, y + half, z + half]
+                    ];
+                } else if (dir[2] === 1) { // front
+                    faceVertices = [
+                        [x - half, y - half, z + half],
+                        [x + half, y - half, z + half],
+                        [x + half, y + half, z + half],
+                        [x - half, y + half, z + half]
+                    ];
+                } else { // back
+                    faceVertices = [
+                        [x + half, y - half, z - half],
+                        [x - half, y - half, z - half],
+                        [x - half, y + half, z - half],
+                        [x + half, y + half, z - half]
+                    ];
+                }
+
+                // Add vertices for the face
+                faceVertices.forEach(vertex => {
+                    vertices.push(...vertex);
+                    normals.push(...dir);
+                    colors.push(color.r, color.g, color.b);
+                });
+            }
+        }
+
+        // Initialize world
+        const world = new World();
+
+        // Player controller
+        class Player {
+            constructor() {
+                this.position = new THREE.Vector3(0, 5, 0);
+                this.velocity = new THREE.Vector3(0, 0, 0);
+                this.rotation = new THREE.Euler(0, 0, 0, 'YXZ');
+                this.isGrounded = false;
+                this.isFlying = false;
+                this.height = 1.8;
+                this.radius = 0.3;
+            }
+
+            update(deltaTime, world) {
+                // Apply gravity only if not flying
+                if (!this.isFlying && !this.isGrounded) {
+                    this.velocity.y += config.gravity * deltaTime;
+                }
+
+                // Update position
+                const newPos = this.position.clone().add(
+                    this.velocity.clone().multiplyScalar(deltaTime)
+                );
+
+                // Simple collision detection (disabled when flying)
+                if (!this.isFlying) {
+                    const groundY = this.checkGround(world, newPos.x, newPos.z);
+                    if (newPos.y <= groundY + this.height) {
+                        newPos.y = groundY + this.height;
+                        this.velocity.y = 0;
+                        this.isGrounded = true;
+                    } else {
+                        this.isGrounded = false;
+                    }
+                }
+
+                this.position.copy(newPos);
+
+                // Update camera
+                camera.position.copy(this.position);
+                camera.rotation.copy(this.rotation);
+            }
+
+            checkGround(world, x, z) {
+                // Check blocks below player
+                for (let y = Math.floor(this.position.y); y >= -10; y--) {
+                    if (world.getBlockAt(Math.floor(x), y, Math.floor(z)) !== BlockType.AIR) {
+                        return y + 0.5;
+                    }
+                }
+                return -10;
+            }
+
+            jump() {
+                if (this.isGrounded && !this.isFlying) {
+                    this.velocity.y = config.jumpVelocity;
+                    this.isGrounded = false;
+                }
+            }
+
+            toggleFly() {
+                this.isFlying = !this.isFlying;
+                if (this.isFlying) {
+                    this.velocity.y = 0; // Stop falling when entering fly mode
+                    document.getElementById('flyMode').style.display = 'block';
+                    document.getElementById('flyBtn').classList.add('active');
+                } else {
+                    document.getElementById('flyMode').style.display = 'none';
+                    document.getElementById('flyBtn').classList.remove('active');
+                }
+            }
+
+            move(forward, right, up = 0) {
+                const moveVector = new THREE.Vector3();
+                const speed = this.isFlying ? config.flySpeed : config.moveSpeed;
+                
+                // Calculate movement direction
+                const forwardVector = new THREE.Vector3(0, 0, -1);
+                forwardVector.applyQuaternion(camera.quaternion);
+                if (!this.isFlying) {
+                    forwardVector.y = 0;
+                }
+                forwardVector.normalize();
+
+                const rightVector = new THREE.Vector3(1, 0, 0);
+                rightVector.applyQuaternion(camera.quaternion);
+                if (!this.isFlying) {
+                    rightVector.y = 0;
+                }
+                rightVector.normalize();
+
+                moveVector.add(forwardVector.multiplyScalar(forward));
+                moveVector.add(rightVector.multiplyScalar(right));
+
+                if (this.isFlying) {
+                    // Add vertical movement in fly mode
+                    moveVector.y += up;
+                }
+
+                if (moveVector.length() > 0) {
+                    moveVector.normalize();
+                    this.velocity.x = moveVector.x * speed;
+                    this.velocity.z = moveVector.z * speed;
+                    if (this.isFlying) {
+                        this.velocity.y = moveVector.y * speed;
+                    }
+                } else {
+                    this.velocity.x = 0;
+                    this.velocity.z = 0;
+                    if (this.isFlying) {
+                        this.velocity.y = 0;
+                    }
+                }
+            }
+        }
+
+        // Input handling with multi-touch support
+        class InputHandler {
+            constructor() {
+                this.keys = {};
+                this.mouseMovement = { x: 0, y: 0 };
+                this.touches = new Map();
+                this.joystickActive = false;
+                this.joystickVector = { x: 0, y: 0 };
+                this.cameraTouch = null;
+
+                this.setupKeyboard();
+                this.setupMouse();
+                this.setupTouch();
+                this.setupMobileControls();
+            }
+
+            setupKeyboard() {
+                document.addEventListener('keydown', (e) => {
+                    this.keys[e.code] = true;
+                    
+                    // Toggle fly mode with F key
+                    if (e.code === 'KeyF') {
+                        player.toggleFly();
+                    }
+                });
+
+                document.addEventListener('keyup', (e) => {
+                    this.keys[e.code] = false;
+                });
+            }
+
+            setupMouse() {
+                canvas.addEventListener('click', () => {
+                    canvas.requestPointerLock();
+                });
+
+                document.addEventListener('mousemove', (e) => {
+                    if (document.pointerLockElement === canvas) {
+                        this.mouseMovement.x += e.movementX;
+                        this.mouseMovement.y += e.movementY;
+                    }
+                });
+
+                canvas.addEventListener('mousedown', (e) => {
+                    if (document.pointerLockElement === canvas) {
+                        if (e.button === 0) this.breakBlock();
+                        if (e.button === 2) this.placeBlock();
+                    }
+                });
+
+                canvas.addEventListener('contextmenu', (e) => e.preventDefault());
+            }
+
+            setupTouch() {
+                // Multi-touch support for camera control
+                canvas.addEventListener('touchstart', (e) => {
+                    // Find a touch that's not on a control
+                    for (let i = 0; i < e.changedTouches.length; i++) {
+                        const touch = e.changedTouches[i];
+                        const element = document.elementFromPoint(touch.clientX, touch.clientY);
+                        
+                        // If touch is not on a mobile control, use it for camera
+                        if (!element.closest('.mobile-controls')) {
+                            this.cameraTouch = {
+                                id: touch.identifier,
+                                lastX: touch.clientX,
+                                lastY: touch.clientY
+                            };
+                            break;
+                        }
+                    }
+                });
+
+                canvas.addEventListener('touchmove', (e) => {
+                    if (this.cameraTouch) {
+                        for (let i = 0; i < e.touches.length; i++) {
+                            const touch = e.touches[i];
+                            if (touch.identifier === this.cameraTouch.id) {
+                                const deltaX = touch.clientX - this.cameraTouch.lastX;
+                                const deltaY = touch.clientY - this.cameraTouch.lastY;
+
+                                this.mouseMovement.x += deltaX * 2;
+                                this.mouseMovement.y += deltaY * 2;
+
+                                this.cameraTouch.lastX = touch.clientX;
+                                this.cameraTouch.lastY = touch.clientY;
+                                break;
+                            }
+                        }
+                    }
+                    e.preventDefault();
+                }, { passive: false });
+
+                canvas.addEventListener('touchend', (e) => {
+                    // Check if camera touch ended
+                    for (let i = 0; i < e.changedTouches.length; i++) {
+                        if (this.cameraTouch && e.changedTouches[i].identifier === this.cameraTouch.id) {
+                            this.cameraTouch = null;
+                            break;
+                        }
+                    }
+                });
+            }
+
+            setupMobileControls() {
+                // Joystick with multi-touch support
+                const joystick = document.getElementById('joystick');
+                const joystickKnob = document.getElementById('joystick-knob');
+                let joystickTouchId = null;
+
+                const handleJoystick = (touch) => {
+                    const rect = joystick.getBoundingClientRect();
+                    const centerX = rect.left + rect.width / 2;
+                    const centerY = rect.top + rect.height / 2;
+                    
+                    let deltaX = touch.clientX - centerX;
+                    let deltaY = touch.clientY - centerY;
+                    
+                    const distance = Math.sqrt(deltaX * deltaX + deltaY * deltaY);
+                    const maxDistance = rect.width / 2 - 20;
+                    
+                    if (distance > maxDistance) {
+                        deltaX = (deltaX / distance) * maxDistance;
+                        deltaY = (deltaY / distance) * maxDistance;
+                    }
+                    
+                    joystickKnob.style.transform = `translate(calc(-50% + ${deltaX}px), calc(-50% + ${deltaY}px))`;
+                    
+                    this.joystickVector.x = deltaX / maxDistance;
+                    this.joystickVector.y = -deltaY / maxDistance;
+                    this.joystickActive = true;
+                };
+
+                joystick.addEventListener('touchstart', (e) => {
+                    if (!joystickTouchId && e.changedTouches.length > 0) {
+                        joystickTouchId = e.changedTouches[0].identifier;
+                        handleJoystick(e.changedTouches[0]);
+                    }
+                    e.preventDefault();
+                });
+
+                joystick.addEventListener('touchmove', (e) => {
+                    for (let i = 0; i < e.touches.length; i++) {
+                        if (e.touches[i].identifier === joystickTouchId) {
+                            handleJoystick(e.touches[i]);
+                            break;
+                        }
+                    }
+                    e.preventDefault();
+                });
+
+                joystick.addEventListener('touchend', (e) => {
+                    for (let i = 0; i < e.changedTouches.length; i++) {
+                        if (e.changedTouches[i].identifier === joystickTouchId) {
+                            joystickKnob.style.transform = 'translate(-50%, -50%)';
+                            this.joystickVector.x = 0;
+                            this.joystickVector.y = 0;
+                            this.joystickActive = false;
+                            joystickTouchId = null;
+                            break;
+                        }
+                    }
+                });
+
+                // Action buttons with multi-touch support
+                document.getElementById('jumpBtn').addEventListener('touchstart', (e) => {
+                    player.jump();
+                    e.preventDefault();
+                });
+
+                document.getElementById('flyBtn').addEventListener('touchstart', (e) => {
+                    player.toggleFly();
+                    e.preventDefault();
+                });
+
+                document.getElementById('placeBtn').addEventListener('touchstart', (e) => {
+                    this.placeBlock();
+                    e.preventDefault();
+                });
+
+                document.getElementById('breakBtn').addEventListener('touchstart', (e) => {
+                    this.breakBlock();
+                    e.preventDefault();
+                });
+            }
+
+            breakBlock() {
+                const raycaster = new THREE.Raycaster();
+                raycaster.setFromCamera(new THREE.Vector2(0, 0), camera);
+                
+                const intersects = [];
+                world.loadedChunks.forEach(key => {
+                    const chunk = world.chunks.get(key);
+                    if (chunk && chunk.mesh) {
+                        const chunkIntersects = raycaster.intersectObject(chunk.mesh);
+                        intersects.push(...chunkIntersects);
+                    }
+                });
+
+                if (intersects.length > 0) {
+                    const hit = intersects[0];
+                    const point = hit.point.sub(hit.face.normal.multiplyScalar(0.1));
+                    world.setBlockAt(
+                        Math.floor(point.x + 0.5),
+                        Math.floor(point.y + 0.5),
+                        Math.floor(point.z + 0.5),
+                        BlockType.AIR
+                    );
+                }
+            }
+
+            placeBlock() {
+                const raycaster = new THREE.Raycaster();
+                raycaster.setFromCamera(new THREE.Vector2(0, 0), camera);
+                
+                const intersects = [];
+                world.loadedChunks.forEach(key => {
+                    const chunk = world.chunks.get(key);
+                    if (chunk && chunk.mesh) {
+                        const chunkIntersects = raycaster.intersectObject(chunk.mesh);
+                        intersects.push(...chunkIntersects);
+                    }
+                });
+
+                if (intersects.length > 0) {
+                    const hit = intersects[0];
+                    const point = hit.point.add(hit.face.normal.multiplyScalar(0.1));
+                    world.setBlockAt(
+                        Math.floor(point.x + 0.5),
+                        Math.floor(point.y + 0.5),
+                        Math.floor(point.z + 0.5),
+                        BlockType.STONE
+                    );
+                }
+            }
+
+            getMovement() {
+                let forward = 0;
+                let right = 0;
+                let up = 0;
+
+                // Keyboard input
+                if (this.keys['KeyW'] || this.keys['ArrowUp']) forward += 1;
+                if (this.keys['KeyS'] || this.keys['ArrowDown']) forward -= 1;
+                if (this.keys['KeyD'] || this.keys['ArrowRight']) right += 1;
+                if (this.keys['KeyA'] || this.keys['ArrowLeft']) right -= 1;
+                
+                // Vertical movement in fly mode
+                if (player.isFlying) {
+                    if (this.keys['Space']) up += 1;
+                    if (this.keys['ShiftLeft'] || this.keys['ShiftRight']) up -= 1;
+                }
+
+                // Joystick input
+                if (this.joystickActive) {
+                    forward += this.joystickVector.y;
+                    right += this.joystickVector.x;
+                }
+
+                return { forward, right, up };
+            }
+
+            consumeMouseMovement() {
+                const movement = { ...this.mouseMovement };
+                this.mouseMovement.x = 0;
+                this.mouseMovement.y = 0;
+                return movement;
+            }
+        }
+
+        // Initialize game objects
+        const player = new Player();
+        const input = new InputHandler();
+
+        // Game loop
+        let lastTime = performance.now();
+
+        function animate() {
+            requestAnimationFrame(animate);
+
+            const currentTime = performance.now();
+            const deltaTime = (currentTime - lastTime) / 1000;
+            lastTime = currentTime;
+
+            // Update FPS counter
+            stats.fps = Math.round(1 / deltaTime);
+            document.getElementById('fps').textContent = `FPS: ${stats.fps}`;
+
+            // Update face counter
+            let totalFaces = 0;
+            world.loadedChunks.forEach(key => {
+                const chunk = world.chunks.get(key);
+                if (chunk && chunk.mesh) {
+                    totalFaces += chunk.mesh.geometry.index.count / 3;
+                }
+            });
+            document.getElementById('debug').textContent = `Faces: ${totalFaces}`;
+
+            // Update player rotation from mouse
+            const mouseMovement = input.consumeMouseMovement();
+            player.rotation.y -= mouseMovement.x * config.mouseSensitivity;
+            player.rotation.x -= mouseMovement.y * config.mouseSensitivity;
+            player.rotation.x = Math.max(-Math.PI / 2, Math.min(Math.PI / 2, player.rotation.x));
+
+            // Update player movement
+            const movement = input.getMovement();
+            player.move(movement.forward, movement.right, movement.up);
+
+            // Handle jump (only when not flying)
+            if (input.keys['Space'] && !player.isFlying) {
+                player.jump();
+            }
+
+            // Update player physics
+            player.update(deltaTime, world);
+
+            // Update world chunks
+            world.updateChunksAroundPlayer(player.position.x, player.position.z);
+
+            // Update coordinates display
+            document.getElementById('coords').textContent = 
+                `X: ${Math.floor(player.position.x)} Y: ${Math.floor(player.position.y)} Z: ${Math.floor(player.position.z)}`;
+
+            // Render
+            renderer.render(scene, camera);
+        }
+
+        // Handle window resize
+        window.addEventListener('resize', () => {
+            updateRendererSize();
+        });
+
+        // Handle orientation change
+        window.addEventListener('orientationchange', () => {
+            setTimeout(updateRendererSize, 100);
+        });
+
+        // Hide loading screen and start game
+        window.addEventListener('load', () => {
+            // Ensure proper initial sizing
+            updateRendererSize();
+            
+            setTimeout(() => {
+                document.getElementById('loadingProgress').style.width = '100%';
+                setTimeout(() => {
+                    document.getElementById('loading').style.display = 'none';
+                    animate();
+                }, 500);
+            }, 100);
+        });
+
+        // Prevent scrolling on mobile
+        document.addEventListener('touchmove', (e) => {
+            if (e.target.closest('.mobile-controls')) return;
+            e.preventDefault();
+        }, { passive: false });
+
+        // Handle visibility change
+        document.addEventListener('visibilitychange', () => {
+            if (document.hidden) {
+                // Pause game logic if needed
+            } else {
+                lastTime = performance.now(); // Reset delta time
+            }
+        });
+    </script>
+</body>
+</html>
