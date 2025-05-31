@@ -6,7 +6,7 @@ export const config = {
     gravity: -20,
     jumpVelocity: 10,
     moveSpeed: 5,
-    mouseSensitivity: 0.002,
+    mouseSensitivity: 0.005,  // FIXED: Increased from 0.002 for normal sensitivity
     mobileMoveSensitivity: 0.02
 };
 
