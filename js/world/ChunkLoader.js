@@ -40,6 +40,16 @@ export class ChunkLoader {
         this.updateSpatialGrid();
     }
 
+    // MÉTODO FALTANTE: Actualizar velocidad del jugador para predicción
+    updatePlayerVelocity(playerPos, deltaTime) {
+        if (deltaTime > 0) {
+            this.playerVelocity.x = (playerPos.x - this.lastPlayerPos.x) / deltaTime;
+            this.playerVelocity.z = (playerPos.z - this.lastPlayerPos.z) / deltaTime;
+        }
+        this.lastPlayerPos.x = playerPos.x;
+        this.lastPlayerPos.z = playerPos.z;
+    }
+
     calculateRequiredChunks(playerPos, camera) {
         const chunks = new Set();
         const centerX = Math.floor(playerPos.x / config.chunkSize);
@@ -105,6 +115,13 @@ export class ChunkLoader {
         }
     }
 
+    // MÉTODO FALTANTE: Calcular nivel de detalle basado en distancia
+    calculateLOD(distance) {
+        if (distance < config.chunkSize * 2) return 0; // Full detail
+        if (distance < config.chunkSize * 4) return 1; // Medium detail
+        return 2; // Low detail
+    }
+
     async processLoadingQueue(currentTime) {
         const frameStart = performance.now();
         let processed = 0;
@@ -123,6 +140,12 @@ export class ChunkLoader {
             this.loadChunk(chunkInfo);
             processed++;
         }
+    }
+
+    // MÉTODO FALTANTE: Aplicar datos de chunk desde caché
+    applyChunkData(chunkInfo, cachedData) {
+        console.log('[ChunkLoader] Applying cached chunk data:', chunkInfo.key);
+        this.applyMeshData(chunkInfo, cachedData.mesh);
     }
 
     async loadChunk(chunkInfo) {
@@ -212,5 +235,78 @@ export class ChunkLoader {
         }
     }
 
-    // ... resto del código igual ...
+    // MÉTODO FALTANTE: Limpiar memoria cuando hay demasiados chunks
+    performMemoryCleanup() {
+        console.log('[ChunkLoader] Performing memory cleanup, chunks:', this.activeChunks.size);
+        // Ordenar chunks por distancia y eliminar los más lejanos
+        const sortedChunks = Array.from(this.activeChunks.entries())
+            .sort((a, b) => {
+                const [, chunkA] = a;
+                const [, chunkB] = b;
+                const distA = Math.sqrt(
+                    Math.pow(chunkA.worldX * config.chunkSize - this.lastPlayerPos.x, 2) +
+                    Math.pow(chunkA.worldZ * config.chunkSize - this.lastPlayerPos.z, 2)
+                );
+                const distB = Math.sqrt(
+                    Math.pow(chunkB.worldX * config.chunkSize - this.lastPlayerPos.x, 2) +
+                    Math.pow(chunkB.worldZ * config.chunkSize - this.lastPlayerPos.z, 2)
+                );
+                return distB - distA;
+            });
+        
+        // Eliminar chunks hasta estar bajo el límite
+        const chunksToRemove = this.activeChunks.size - Math.floor(this.maxChunksInMemory * 0.8);
+        for (let i = 0; i < chunksToRemove && i < sortedChunks.length; i++) {
+            const [key, chunk] = sortedChunks[i];
+            chunk.removeFromScene(this.scene);
+            this.chunkPool.release(chunk);
+            this.activeChunks.delete(key);
+            this.spatialGrid.remove(chunk.worldX, chunk.worldZ);
+        }
+    }
+
+    // MÉTODO FALTANTE: Actualizar grid espacial
+    updateSpatialGrid() {
+        // El spatial grid se actualiza automáticamente en insert/remove
+        // Este método puede usarse para optimizaciones futuras
+    }
+
+    // MÉTODO FALTANTE: Obtener chunk en coordenadas específicas
+    getChunkAt(worldX, worldZ) {
+        const chunkX = Math.floor(worldX / config.chunkSize);
+        const chunkZ = Math.floor(worldZ / config.chunkSize);
+        const key = `${chunkX},${chunkZ}`;
+        return this.activeChunks.get(key);
+    }
+
+    // MÉTODO FALTANTE: Obtener estadísticas
+    getStats() {
+        return {
+            activeChunks: this.activeChunks.size,
+            loadingChunks: this.loadingChunks.size,
+            queuedChunks: this.priorityQueue.size(),
+            poolStats: this.chunkPool.getStats(),
+            cacheStats: this.cache.getStats(),
+            gridStats: this.spatialGrid.getStats()
+        };
+    }
+
+    // MÉTODO FALTANTE: Limpiar recursos
+    dispose() {
+        // Limpiar todos los chunks activos
+        for (const [key, chunk] of this.activeChunks) {
+            chunk.removeFromScene(this.scene);
+            this.chunkPool.release(chunk);
+        }
+        this.activeChunks.clear();
+        this.loadingChunks.clear();
+        this.priorityQueue.clear();
+        this.spatialGrid.clear();
+        
+        // Dispose worker pools
+        this.terrainWorkerPool.dispose();
+        this.meshWorkerPool.dispose();
+        
+        console.log('[ChunkLoader] Disposed');
+    }
 }
