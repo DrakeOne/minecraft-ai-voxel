@@ -56,14 +56,25 @@ const directionalLight = new THREE.DirectionalLight(0xffffff, 0.8);
 directionalLight.position.set(50, 100, 50);
 scene.add(directionalLight);
 
-// Initialize game objects
-const world = new World();
+// Initialize game objects - UPDATED to pass scene to World
+const world = new World(scene);
 const player = new Player(world);
 const inputHandler = new InputHandler(canvas, player, world, camera, scene);
 
 // Prevent iOS bounce and ensure proper sizing
 document.addEventListener('gesturestart', e => e.preventDefault());
 document.addEventListener('gesturechange', e => e.preventDefault());
+
+// Performance monitoring
+let showAdvancedStats = false;
+
+// Toggle advanced stats with 'F3' key
+document.addEventListener('keydown', (e) => {
+    if (e.key === 'F3') {
+        e.preventDefault();
+        showAdvancedStats = !showAdvancedStats;
+    }
+});
 
 // Game loop
 let lastTime = performance.now();
@@ -89,8 +100,19 @@ function animate() {
     document.getElementById('fps').textContent = `FPS: ${stats.fps}`;
     document.getElementById('coords').textContent = 
         `X: ${Math.floor(player.position.x)} Y: ${Math.floor(player.position.y)} Z: ${Math.floor(player.position.z)}`;
-    document.getElementById('debug').textContent = 
-        `Faces: ${stats.totalFaces} | Chunks: ${stats.visibleChunks}/${stats.totalChunks}`;
+    
+    // Update debug info
+    if (showAdvancedStats && world.useAdvancedLoader) {
+        const worldStats = world.getStats();
+        document.getElementById('debug').innerHTML = 
+            `Chunks: ${stats.visibleChunks}/${stats.totalChunks}<br>` +
+            `Pool: ${worldStats.poolStats?.currentlyInUse || 0}/${worldStats.poolStats?.created || 0}<br>` +
+            `Cache: ${Math.round((worldStats.cacheStats?.hitRate || 0) * 100)}% hit<br>` +
+            `Workers: ${worldStats.busyWorkers || 0}/${worldStats.poolSize || 0}`;
+    } else {
+        document.getElementById('debug').textContent = 
+            `Faces: ${stats.totalFaces} | Chunks: ${stats.visibleChunks}/${stats.totalChunks}`;
+    }
 
     // Render
     renderer.render(scene, camera);
@@ -109,6 +131,15 @@ window.addEventListener('load', () => {
             if (loading) {
                 loading.style.display = 'none';
             }
+            
+            // Log system info
+            console.log('=== Minecraft AI Voxel ===');
+            console.log('Advanced Chunk System:', world.useAdvancedLoader ? 'ENABLED' : 'DISABLED');
+            console.log('Worker Threads:', navigator.hardwareConcurrency || 4);
+            console.log('Render Distance:', config.renderDistance);
+            console.log('Chunk Size:', config.chunkSize);
+            console.log('Press F3 for advanced stats');
+            
             animate();
         }, 300);
     }, 100);
@@ -116,3 +147,10 @@ window.addEventListener('load', () => {
 
 // Handle window resize
 window.addEventListener('resize', updateRendererSize);
+
+// Cleanup on page unload
+window.addEventListener('beforeunload', () => {
+    if (world.dispose) {
+        world.dispose();
+    }
+});
