@@ -20,7 +20,7 @@ export const config = {
         workerCount: 2,          // Conservative worker count
         fallbackToSync: true,    // Always have fallback
         debugWorkers: true,      // Extra logging for workers
-        useAdvancedLoader: true  // Use advanced chunk loading system
+        useAdvancedLoader: false // DISABLED - Fix for rendering issue
     }
 };
 
