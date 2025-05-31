@@ -53,6 +53,13 @@
             font-size: clamp(10px, 1.8vw, 12px);
         }
         
+        #debug {
+            top: 50px;
+            left: 10px;
+            font-size: clamp(10px, 1.8vw, 12px);
+            color: yellow;
+        }
+        
         #crosshair {
             position: absolute;
             top: 50%;
@@ -216,6 +223,7 @@
     <!-- HUD Elements -->
     <div id="fps" class="hud">FPS: 0</div>
     <div id="coords" class="hud">X: 0 Y: 0 Z: 0</div>
+    <div id="debug" class="hud">Faces: 0</div>
     <div id="crosshair"></div>
     
     <!-- Mobile Controls -->
@@ -241,7 +249,8 @@
         const stats = {
             fps: 0,
             frameTime: 0,
-            lastTime: performance.now()
+            lastTime: performance.now(),
+            totalFaces: 0
         };
 
         // Game configuration
@@ -291,7 +300,7 @@
         const canvas = document.getElementById('gameCanvas');
         const renderer = new THREE.WebGLRenderer({
             canvas,
-            antialias: false, // Disable for better performance
+            antialias: false,
             powerPreference: "high-performance",
             alpha: false,
             stencil: false,
@@ -324,199 +333,7 @@
         directionalLight.position.set(50, 100, 50);
         scene.add(directionalLight);
 
-        // Chunk management
-        class Chunk {
-            constructor(x, z) {
-                this.x = x;
-                this.z = z;
-                this.blocks = new Uint8Array(config.chunkSize * config.chunkSize * config.chunkSize);
-                this.mesh = null;
-                this.needsUpdate = true;
-                this.generateTerrain();
-            }
-
-            generateTerrain() {
-                // Simple flat world generation
-                for (let x = 0; x < config.chunkSize; x++) {
-                    for (let z = 0; z < config.chunkSize; z++) {
-                        const worldX = this.x * config.chunkSize + x;
-                        const worldZ = this.z * config.chunkSize + z;
-                        
-                        // Generate flat terrain at y=0
-                        this.setBlock(x, 0, z, BlockType.GRASS);
-                        
-                        // Add some random blocks for variety
-                        if (Math.random() < 0.02) {
-                            this.setBlock(x, 1, z, BlockType.STONE);
-                        }
-                    }
-                }
-            }
-
-            getBlock(x, y, z) {
-                if (x < 0 || x >= config.chunkSize || 
-                    y < 0 || y >= config.chunkSize || 
-                    z < 0 || z >= config.chunkSize) {
-                    return BlockType.AIR;
-                }
-                const index = x + y * config.chunkSize + z * config.chunkSize * config.chunkSize;
-                return this.blocks[index];
-            }
-
-            setBlock(x, y, z, type) {
-                if (x < 0 || x >= config.chunkSize || 
-                    y < 0 || y >= config.chunkSize || 
-                    z < 0 || z >= config.chunkSize) {
-                    return;
-                }
-                const index = x + y * config.chunkSize + z * config.chunkSize * config.chunkSize;
-                this.blocks[index] = type;
-                this.needsUpdate = true;
-            }
-
-            updateMesh() {
-                if (!this.needsUpdate) return;
-
-                // Remove old mesh
-                if (this.mesh) {
-                    scene.remove(this.mesh);
-                    this.mesh.geometry.dispose();
-                    this.mesh.material.dispose();
-                }
-
-                // Create optimized merged geometry
-                const geometry = new THREE.BufferGeometry();
-                const vertices = [];
-                const normals = [];
-                const colors = [];
-                const indices = [];
-                let vertexCount = 0;
-
-                // Generate visible faces only (culling)
-                for (let x = 0; x < config.chunkSize; x++) {
-                    for (let y = 0; y < config.chunkSize; y++) {
-                        for (let z = 0; z < config.chunkSize; z++) {
-                            const block = this.getBlock(x, y, z);
-                            if (block === BlockType.AIR) continue;
-
-                            const worldX = this.x * config.chunkSize + x;
-                            const worldY = y;
-                            const worldZ = this.z * config.chunkSize + z;
-
-                            // Check each face for visibility
-                            const faces = [
-                                { dir: [0, 1, 0], check: [x, y + 1, z] }, // top
-                                { dir: [0, -1, 0], check: [x, y - 1, z] }, // bottom
-                                { dir: [1, 0, 0], check: [x + 1, y, z] }, // right
-                                { dir: [-1, 0, 0], check: [x - 1, y, z] }, // left
-                                { dir: [0, 0, 1], check: [x, y, z + 1] }, // front
-                                { dir: [0, 0, -1], check: [x, y, z - 1] } // back
-                            ];
-
-                            const color = new THREE.Color(blockColors[block]);
-
-                            faces.forEach(face => {
-                                if (this.getBlock(...face.check) === BlockType.AIR) {
-                                    const startVertex = vertexCount;
-                                    this.addFace(vertices, normals, colors, worldX, worldY, worldZ, face.dir, color);
-                                    
-                                    // Add indices for the face (2 triangles)
-                                    indices.push(
-                                        startVertex, startVertex + 1, startVertex + 2,
-                                        startVertex, startVertex + 2, startVertex + 3
-                                    );
-                                    
-                                    vertexCount += 4;
-                                }
-                            });
-                        }
-                    }
-                }
-
-                // Set geometry attributes
-                geometry.setAttribute('position', new THREE.Float32BufferAttribute(vertices, 3));
-                geometry.setAttribute('normal', new THREE.Float32BufferAttribute(normals, 3));
-                geometry.setAttribute('color', new THREE.Float32BufferAttribute(colors, 3));
-                geometry.setIndex(indices);
-                
-                // Compute bounding box for frustum culling
-                geometry.computeBoundingBox();
-                geometry.computeBoundingSphere();
-
-                // Create mesh with proper material settings
-                const material = new THREE.MeshLambertMaterial({ 
-                    vertexColors: true,
-                    side: THREE.FrontSide, // Only render front faces
-                    flatShading: true
-                });
-
-                this.mesh = new THREE.Mesh(geometry, material);
-                this.mesh.matrixAutoUpdate = false;
-                this.mesh.updateMatrix();
-                scene.add(this.mesh);
-
-                this.needsUpdate = false;
-            }
-
-            addFace(vertices, normals, colors, x, y, z, dir, color) {
-                const half = config.blockSize / 2;
-
-                // Face vertices based on direction (corrected winding order)
-                let faceVertices;
-                if (dir[1] === 1) { // top
-                    faceVertices = [
-                        [x - half, y + half, z - half],
-                        [x + half, y + half, z - half],
-                        [x + half, y + half, z + half],
-                        [x - half, y + half, z + half]
-                    ];
-                } else if (dir[1] === -1) { // bottom
-                    faceVertices = [
-                        [x - half, y - half, z - half],
-                        [x - half, y - half, z + half],
-                        [x + half, y - half, z + half],
-                        [x + half, y - half, z - half]
-                    ];
-                } else if (dir[0] === 1) { // right
-                    faceVertices = [
-                        [x + half, y - half, z - half],
-                        [x + half, y - half, z + half],
-                        [x + half, y + half, z + half],
-                        [x + half, y + half, z - half]
-                    ];
-                } else if (dir[0] === -1) { // left
-                    faceVertices = [
-                        [x - half, y - half, z + half],
-                        [x - half, y - half, z - half],
-                        [x - half, y + half, z - half],
-                        [x - half, y + half, z + half]
-                    ];
-                } else if (dir[2] === 1) { // front
-                    faceVertices = [
-                        [x - half, y - half, z + half],
-                        [x + half, y - half, z + half],
-                        [x + half, y + half, z + half],
-                        [x - half, y + half, z + half]
-                    ];
-                } else { // back
-                    faceVertices = [
-                        [x + half, y - half, z - half],
-                        [x - half, y - half, z - half],
-                        [x - half, y + half, z - half],
-                        [x + half, y + half, z - half]
-                    ];
-                }
-
-                // Add vertices for the face
-                faceVertices.forEach(vertex => {
-                    vertices.push(...vertex);
-                    normals.push(...dir);
-                    colors.push(color.r, color.g, color.b);
-                });
-            }
-        }
-
-        // World management
+        // World management (moved before Chunk for access)
         class World {
             constructor() {
                 this.chunks = new Map();
@@ -530,9 +347,20 @@
             getChunk(x, z) {
                 const key = this.getChunkKey(x, z);
                 if (!this.chunks.has(key)) {
-                    this.chunks.set(key, new Chunk(x, z));
+                    this.chunks.set(key, new Chunk(x, z, this));
                 }
                 return this.chunks.get(key);
+            }
+
+            // Get block from world coordinates (handles cross-chunk queries)
+            getBlockAtWorldCoords(worldX, worldY, worldZ) {
+                const chunkX = Math.floor(worldX / config.chunkSize);
+                const chunkZ = Math.floor(worldZ / config.chunkSize);
+                const localX = ((worldX % config.chunkSize) + config.chunkSize) % config.chunkSize;
+                const localZ = ((worldZ % config.chunkSize) + config.chunkSize) % config.chunkSize;
+                
+                const chunk = this.getChunk(chunkX, chunkZ);
+                return chunk.getBlock(localX, worldY, localZ);
             }
 
             updateChunksAroundPlayer(playerX, playerZ) {
@@ -574,32 +402,293 @@
             }
 
             getBlockAt(x, y, z) {
-                const chunkX = Math.floor(x / config.chunkSize);
-                const chunkZ = Math.floor(z / config.chunkSize);
-                const localX = ((x % config.chunkSize) + config.chunkSize) % config.chunkSize;
-                const localZ = ((z % config.chunkSize) + config.chunkSize) % config.chunkSize;
-                
-                const chunk = this.getChunk(chunkX, chunkZ);
-                return chunk.getBlock(localX, Math.floor(y), localZ);
+                return this.getBlockAtWorldCoords(Math.floor(x), Math.floor(y), Math.floor(z));
             }
 
             setBlockAt(x, y, z, type) {
-                const chunkX = Math.floor(x / config.chunkSize);
-                const chunkZ = Math.floor(z / config.chunkSize);
-                const localX = ((x % config.chunkSize) + config.chunkSize) % config.chunkSize;
-                const localZ = ((z % config.chunkSize) + config.chunkSize) % config.chunkSize;
+                const worldX = Math.floor(x);
+                const worldY = Math.floor(y);
+                const worldZ = Math.floor(z);
+                
+                const chunkX = Math.floor(worldX / config.chunkSize);
+                const chunkZ = Math.floor(worldZ / config.chunkSize);
+                const localX = ((worldX % config.chunkSize) + config.chunkSize) % config.chunkSize;
+                const localZ = ((worldZ % config.chunkSize) + config.chunkSize) % config.chunkSize;
                 
                 const chunk = this.getChunk(chunkX, chunkZ);
-                chunk.setBlock(localX, Math.floor(y), localZ, type);
+                chunk.setBlock(localX, worldY, localZ, type);
                 chunk.updateMesh();
                 
-                // Update adjacent chunks if necessary
-                if (localX === 0) this.getChunk(chunkX - 1, chunkZ).updateMesh();
-                if (localX === config.chunkSize - 1) this.getChunk(chunkX + 1, chunkZ).updateMesh();
-                if (localZ === 0) this.getChunk(chunkX, chunkZ - 1).updateMesh();
-                if (localZ === config.chunkSize - 1) this.getChunk(chunkX, chunkZ + 1).updateMesh();
+                // Update all potentially affected adjacent chunks
+                const chunksToUpdate = new Set();
+                
+                // Check if block is on chunk boundary and update neighbors
+                if (localX === 0) chunksToUpdate.add(this.getChunk(chunkX - 1, chunkZ));
+                if (localX === config.chunkSize - 1) chunksToUpdate.add(this.getChunk(chunkX + 1, chunkZ));
+                if (localZ === 0) chunksToUpdate.add(this.getChunk(chunkX, chunkZ - 1));
+                if (localZ === config.chunkSize - 1) chunksToUpdate.add(this.getChunk(chunkX, chunkZ + 1));
+                
+                // Corner cases
+                if (localX === 0 && localZ === 0) chunksToUpdate.add(this.getChunk(chunkX - 1, chunkZ - 1));
+                if (localX === 0 && localZ === config.chunkSize - 1) chunksToUpdate.add(this.getChunk(chunkX - 1, chunkZ + 1));
+                if (localX === config.chunkSize - 1 && localZ === 0) chunksToUpdate.add(this.getChunk(chunkX + 1, chunkZ - 1));
+                if (localX === config.chunkSize - 1 && localZ === config.chunkSize - 1) chunksToUpdate.add(this.getChunk(chunkX + 1, chunkZ + 1));
+                
+                // Update all affected chunks
+                chunksToUpdate.forEach(chunk => {
+                    if (chunk && this.loadedChunks.has(this.getChunkKey(chunk.x, chunk.z))) {
+                        chunk.updateMesh();
+                    }
+                });
             }
         }
+
+        // Chunk management
+        class Chunk {
+            constructor(x, z, world) {
+                this.x = x;
+                this.z = z;
+                this.world = world;
+                this.blocks = new Uint8Array(config.chunkSize * config.chunkSize * config.chunkSize);
+                this.mesh = null;
+                this.needsUpdate = true;
+                this.generateTerrain();
+            }
+
+            generateTerrain() {
+                // Simple flat world generation with some variety
+                for (let x = 0; x < config.chunkSize; x++) {
+                    for (let z = 0; z < config.chunkSize; z++) {
+                        const worldX = this.x * config.chunkSize + x;
+                        const worldZ = this.z * config.chunkSize + z;
+                        
+                        // Generate flat terrain at y=0
+                        this.setBlock(x, 0, z, BlockType.GRASS);
+                        
+                        // Add some random blocks for variety
+                        if (Math.random() < 0.02) {
+                            const height = Math.floor(Math.random() * 3) + 1;
+                            for (let y = 1; y <= height; y++) {
+                                this.setBlock(x, y, z, BlockType.STONE);
+                            }
+                        }
+                        
+                        // Add some underground layers
+                        for (let y = -1; y >= -3; y--) {
+                            this.setBlock(x, y, z, BlockType.DIRT);
+                        }
+                        for (let y = -4; y >= -10; y--) {
+                            this.setBlock(x, y, z, BlockType.STONE);
+                        }
+                    }
+                }
+            }
+
+            getBlock(x, y, z) {
+                if (x < 0 || x >= config.chunkSize || 
+                    y < -10 || y >= config.chunkSize || 
+                    z < 0 || z >= config.chunkSize) {
+                    return BlockType.AIR;
+                }
+                
+                // Adjust y to handle negative values
+                const adjustedY = y + 10;
+                const index = x + adjustedY * config.chunkSize + z * config.chunkSize * (config.chunkSize + 10);
+                
+                if (index < 0 || index >= this.blocks.length) {
+                    return BlockType.AIR;
+                }
+                
+                return this.blocks[index];
+            }
+
+            setBlock(x, y, z, type) {
+                if (x < 0 || x >= config.chunkSize || 
+                    y < -10 || y >= config.chunkSize || 
+                    z < 0 || z >= config.chunkSize) {
+                    return;
+                }
+                
+                // Adjust y to handle negative values
+                const adjustedY = y + 10;
+                const index = x + adjustedY * config.chunkSize + z * config.chunkSize * (config.chunkSize + 10);
+                
+                if (index >= 0 && index < this.blocks.length) {
+                    this.blocks[index] = type;
+                    this.needsUpdate = true;
+                }
+            }
+
+            // Check if a face should be rendered by checking adjacent block
+            shouldRenderFace(localX, localY, localZ, dir) {
+                const checkX = localX + dir[0];
+                const checkY = localY + dir[1];
+                const checkZ = localZ + dir[2];
+                
+                // If checking within chunk bounds
+                if (checkX >= 0 && checkX < config.chunkSize &&
+                    checkY >= -10 && checkY < config.chunkSize &&
+                    checkZ >= 0 && checkZ < config.chunkSize) {
+                    return this.getBlock(checkX, checkY, checkZ) === BlockType.AIR;
+                }
+                
+                // If checking outside chunk bounds, check neighboring chunk
+                const worldX = this.x * config.chunkSize + checkX;
+                const worldY = checkY;
+                const worldZ = this.z * config.chunkSize + checkZ;
+                
+                return this.world.getBlockAtWorldCoords(worldX, worldY, worldZ) === BlockType.AIR;
+            }
+
+            updateMesh() {
+                if (!this.needsUpdate) return;
+
+                // Remove old mesh
+                if (this.mesh) {
+                    scene.remove(this.mesh);
+                    this.mesh.geometry.dispose();
+                    this.mesh.material.dispose();
+                }
+
+                // Create optimized merged geometry
+                const geometry = new THREE.BufferGeometry();
+                const vertices = [];
+                const normals = [];
+                const colors = [];
+                const indices = [];
+                let vertexCount = 0;
+                let faceCount = 0;
+
+                // Generate visible faces only (culling)
+                for (let x = 0; x < config.chunkSize; x++) {
+                    for (let y = -10; y < config.chunkSize; y++) {
+                        for (let z = 0; z < config.chunkSize; z++) {
+                            const block = this.getBlock(x, y, z);
+                            if (block === BlockType.AIR) continue;
+
+                            const worldX = this.x * config.chunkSize + x;
+                            const worldY = y;
+                            const worldZ = this.z * config.chunkSize + z;
+
+                            // Check each face for visibility
+                            const faces = [
+                                { dir: [0, 1, 0], name: 'top' },
+                                { dir: [0, -1, 0], name: 'bottom' },
+                                { dir: [1, 0, 0], name: 'right' },
+                                { dir: [-1, 0, 0], name: 'left' },
+                                { dir: [0, 0, 1], name: 'front' },
+                                { dir: [0, 0, -1], name: 'back' }
+                            ];
+
+                            const color = new THREE.Color(blockColors[block]);
+
+                            faces.forEach(face => {
+                                if (this.shouldRenderFace(x, y, z, face.dir)) {
+                                    const startVertex = vertexCount;
+                                    this.addFace(vertices, normals, colors, worldX, worldY, worldZ, face.dir, face.name, color);
+                                    
+                                    // Add indices for the face (2 triangles with correct winding)
+                                    indices.push(
+                                        startVertex, startVertex + 1, startVertex + 2,
+                                        startVertex, startVertex + 2, startVertex + 3
+                                    );
+                                    
+                                    vertexCount += 4;
+                                    faceCount++;
+                                }
+                            });
+                        }
+                    }
+                }
+
+                // Update face counter
+                stats.totalFaces = faceCount;
+
+                // Set geometry attributes
+                geometry.setAttribute('position', new THREE.Float32BufferAttribute(vertices, 3));
+                geometry.setAttribute('normal', new THREE.Float32BufferAttribute(normals, 3));
+                geometry.setAttribute('color', new THREE.Float32BufferAttribute(colors, 3));
+                geometry.setIndex(indices);
+                
+                // Compute bounding box for frustum culling
+                geometry.computeBoundingBox();
+                geometry.computeBoundingSphere();
+
+                // Create mesh with proper material settings
+                const material = new THREE.MeshLambertMaterial({ 
+                    vertexColors: true,
+                    side: THREE.FrontSide, // Only render front faces
+                    flatShading: true
+                });
+
+                this.mesh = new THREE.Mesh(geometry, material);
+                this.mesh.matrixAutoUpdate = false;
+                this.mesh.updateMatrix();
+                scene.add(this.mesh);
+
+                this.needsUpdate = false;
+            }
+
+            addFace(vertices, normals, colors, x, y, z, dir, faceName, color) {
+                const half = config.blockSize / 2;
+
+                // Face vertices with correct winding order for backface culling
+                let faceVertices;
+                if (faceName === 'top') {
+                    faceVertices = [
+                        [x - half, y + half, z - half],
+                        [x + half, y + half, z - half],
+                        [x + half, y + half, z + half],
+                        [x - half, y + half, z + half]
+                    ];
+                } else if (faceName === 'bottom') {
+                    faceVertices = [
+                        [x - half, y - half, z - half],
+                        [x - half, y - half, z + half],
+                        [x + half, y - half, z + half],
+                        [x + half, y - half, z - half]
+                    ];
+                } else if (faceName === 'right') {
+                    faceVertices = [
+                        [x + half, y - half, z - half],
+                        [x + half, y - half, z + half],
+                        [x + half, y + half, z + half],
+                        [x + half, y + half, z - half]
+                    ];
+                } else if (faceName === 'left') {
+                    faceVertices = [
+                        [x - half, y - half, z + half],
+                        [x - half, y - half, z - half],
+                        [x - half, y + half, z - half],
+                        [x - half, y + half, z + half]
+                    ];
+                } else if (faceName === 'front') {
+                    faceVertices = [
+                        [x - half, y - half, z + half],
+                        [x + half, y - half, z + half],
+                        [x + half, y + half, z + half],
+                        [x - half, y + half, z + half]
+                    ];
+                } else if (faceName === 'back') {
+                    faceVertices = [
+                        [x + half, y - half, z - half],
+                        [x - half, y - half, z - half],
+                        [x - half, y + half, z - half],
+                        [x + half, y + half, z - half]
+                    ];
+                }
+
+                // Add vertices for the face
+                faceVertices.forEach(vertex => {
+                    vertices.push(...vertex);
+                    normals.push(...dir);
+                    colors.push(color.r, color.g, color.b);
+                });
+            }
+        }
+
+        // Initialize world
+        const world = new World();
 
         // Player controller
         class Player {
@@ -900,7 +989,6 @@
         }
 
         // Initialize game objects
-        const world = new World();
         const player = new Player();
         const input = new InputHandler();
 
@@ -917,6 +1005,16 @@
             // Update FPS counter
             stats.fps = Math.round(1 / deltaTime);
             document.getElementById('fps').textContent = `FPS: ${stats.fps}`;
+
+            // Update face counter
+            let totalFaces = 0;
+            world.loadedChunks.forEach(key => {
+                const chunk = world.chunks.get(key);
+                if (chunk && chunk.mesh) {
+                    totalFaces += chunk.mesh.geometry.index.count / 3;
+                }
+            });
+            document.getElementById('debug').textContent = `Faces: ${totalFaces}`;
 
             // Update player rotation from mouse
             const mouseMovement = input.consumeMouseMovement();
