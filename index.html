@@ -224,7 +224,7 @@
     <!-- HUD Elements -->
     <div id="fps" class="hud">FPS: 0</div>
     <div id="coords" class="hud">X: 0 Y: 0 Z: 0</div>
-    <div id="debug" class="hud">Faces: 0</div>
+    <div id="debug" class="hud">Faces: 0 | Chunks: 0/0</div>
     <div id="crosshair"></div>
     
     <!-- Mobile Controls -->
@@ -251,7 +251,9 @@
             fps: 0,
             frameTime: 0,
             lastTime: performance.now(),
-            totalFaces: 0
+            totalFaces: 0,
+            visibleChunks: 0,
+            totalChunks: 0
         };
 
         // Game configuration
@@ -334,11 +336,43 @@
         directionalLight.position.set(50, 100, 50);
         scene.add(directionalLight);
 
-        // World management (moved before Chunk for access)
+        // Frustum Culling Class - ADDED BEFORE World class
+        class FrustumCuller {
+            constructor() {
+                this.frustum = new THREE.Frustum();
+                this.matrix = new THREE.Matrix4();
+            }
+
+            update(camera) {
+                // Update projection-view matrix
+                this.matrix.multiplyMatrices(camera.projectionMatrix, camera.matrixWorldInverse);
+                this.frustum.setFromProjectionMatrix(this.matrix);
+            }
+
+            isChunkVisible(chunkX, chunkZ) {
+                // Create bounding box for the chunk with small margin to prevent pop-in
+                const min = new THREE.Vector3(
+                    chunkX * config.chunkSize - 0.5,
+                    -0.5,
+                    chunkZ * config.chunkSize - 0.5
+                );
+                const max = new THREE.Vector3(
+                    (chunkX + 1) * config.chunkSize + 0.5,
+                    config.chunkSize + 0.5,
+                    (chunkZ + 1) * config.chunkSize + 0.5
+                );
+                
+                const box = new THREE.Box3(min, max);
+                return this.frustum.intersectsBox(box);
+            }
+        }
+
+        // World management
         class World {
             constructor() {
                 this.chunks = new Map();
                 this.loadedChunks = new Set();
+                this.frustumCuller = new FrustumCuller(); // ADDED: Frustum culler instance
             }
 
             getChunkKey(x, z) {
@@ -365,9 +399,11 @@
             }
 
             updateChunksAroundPlayer(playerX, playerZ) {
+                // ADDED: Update frustum with current camera
+                this.frustumCuller.update(camera);
+                
                 const chunkX = Math.floor(playerX / config.chunkSize);
                 const chunkZ = Math.floor(playerZ / config.chunkSize);
-
                 const newLoadedChunks = new Set();
 
                 // Load chunks within render distance
@@ -375,8 +411,13 @@
                     for (let z = -config.renderDistance; z <= config.renderDistance; z++) {
                         const cx = chunkX + x;
                         const cz = chunkZ + z;
-                        const key = this.getChunkKey(cx, cz);
                         
+                        // ADDED: Check if chunk is visible in frustum
+                        if (!this.frustumCuller.isChunkVisible(cx, cz)) {
+                            continue; // Skip chunks not visible
+                        }
+                        
+                        const key = this.getChunkKey(cx, cz);
                         newLoadedChunks.add(key);
                         
                         if (!this.loadedChunks.has(key)) {
@@ -386,7 +427,7 @@
                     }
                 }
 
-                // Unload chunks outside render distance
+                // Unload chunks outside render distance or not visible
                 for (const key of this.loadedChunks) {
                     if (!newLoadedChunks.has(key)) {
                         const chunk = this.chunks.get(key);
@@ -400,6 +441,10 @@
                 }
 
                 this.loadedChunks = newLoadedChunks;
+                
+                // ADDED: Update stats for debugging
+                stats.visibleChunks = newLoadedChunks.size;
+                stats.totalChunks = (config.renderDistance * 2 + 1) * (config.renderDistance * 2 + 1);
             }
 
             getBlockAt(x, y, z) {
@@ -564,4 +609,500 @@
                             faces.forEach(face => {
                                 if (this.shouldRenderFace(x, y, z, face.dir)) {
                                     const startVertex = vertexCount;
-                                    this.ad
+                                    this.addFace(vertices, normals, colors, indices, worldX, worldY, worldZ, face, color);
+                                    vertexCount += 4;
+                                    faceCount++;
+                                }
+                            });
+                        }
+                    }
+                }
+
+                if (vertices.length === 0) {
+                    this.needsUpdate = false;
+                    return;
+                }
+
+                // Set geometry attributes
+                geometry.setAttribute('position', new THREE.Float32BufferAttribute(vertices, 3));
+                geometry.setAttribute('normal', new THREE.Float32BufferAttribute(normals, 3));
+                geometry.setAttribute('color', new THREE.Float32BufferAttribute(colors, 3));
+                geometry.setIndex(indices);
+
+                // Create mesh with vertex colors
+                const material = new THREE.MeshLambertMaterial({ 
+                    vertexColors: true,
+                    side: THREE.FrontSide
+                });
+                
+                this.mesh = new THREE.Mesh(geometry, material);
+                scene.add(this.mesh);
+
+                stats.totalFaces = faceCount;
+                this.needsUpdate = false;
+            }
+
+            addFace(vertices, normals, colors, indices, x, y, z, face, color) {
+                const size = config.blockSize;
+                const half = size / 2;
+
+                // Define vertices for each face
+                let faceVertices = [];
+                let normal = [0, 0, 0];
+
+                switch(face.name) {
+                    case 'top':
+                        faceVertices = [
+                            [x - half, y + half, z - half],
+                            [x + half, y + half, z - half],
+                            [x + half, y + half, z + half],
+                            [x - half, y + half, z + half]
+                        ];
+                        normal = [0, 1, 0];
+                        break;
+                    case 'bottom':
+                        faceVertices = [
+                            [x - half, y - half, z + half],
+                            [x + half, y - half, z + half],
+                            [x + half, y - half, z - half],
+                            [x - half, y - half, z - half]
+                        ];
+                        normal = [0, -1, 0];
+                        break;
+                    case 'right':
+                        faceVertices = [
+                            [x + half, y - half, z - half],
+                            [x + half, y - half, z + half],
+                            [x + half, y + half, z + half],
+                            [x + half, y + half, z - half]
+                        ];
+                        normal = [1, 0, 0];
+                        break;
+                    case 'left':
+                        faceVertices = [
+                            [x - half, y - half, z + half],
+                            [x - half, y - half, z - half],
+                            [x - half, y + half, z - half],
+                            [x - half, y + half, z + half]
+                        ];
+                        normal = [-1, 0, 0];
+                        break;
+                    case 'front':
+                        faceVertices = [
+                            [x - half, y - half, z + half],
+                            [x + half, y - half, z + half],
+                            [x + half, y + half, z + half],
+                            [x - half, y + half, z + half]
+                        ];
+                        normal = [0, 0, 1];
+                        break;
+                    case 'back':
+                        faceVertices = [
+                            [x + half, y - half, z - half],
+                            [x - half, y - half, z - half],
+                            [x - half, y + half, z - half],
+                            [x + half, y + half, z - half]
+                        ];
+                        normal = [0, 0, -1];
+                        break;
+                }
+
+                // Add vertices
+                const baseIndex = vertices.length / 3;
+                faceVertices.forEach(vertex => {
+                    vertices.push(...vertex);
+                    normals.push(...normal);
+                    colors.push(color.r, color.g, color.b);
+                });
+
+                // Add indices for two triangles
+                indices.push(
+                    baseIndex, baseIndex + 1, baseIndex + 2,
+                    baseIndex, baseIndex + 2, baseIndex + 3
+                );
+            }
+        }
+
+        // Player controller
+        class Player {
+            constructor() {
+                this.position = new THREE.Vector3(8, 5, 8);
+                this.velocity = new THREE.Vector3(0, 0, 0);
+                this.rotation = new THREE.Euler(0, 0, 0, 'YXZ');
+                this.isGrounded = false;
+                this.canJump = true;
+            }
+
+            update(deltaTime, input) {
+                // Apply gravity
+                if (!this.isGrounded) {
+                    this.velocity.y += config.gravity * deltaTime;
+                }
+
+                // Movement
+                const moveVector = new THREE.Vector3();
+                
+                if (input.forward) moveVector.z -= 1;
+                if (input.backward) moveVector.z += 1;
+                if (input.left) moveVector.x -= 1;
+                if (input.right) moveVector.x += 1;
+
+                if (moveVector.length() > 0) {
+                    moveVector.normalize();
+                    moveVector.multiplyScalar(config.moveSpeed);
+                    
+                    // Apply rotation
+                    moveVector.applyAxisAngle(new THREE.Vector3(0, 1, 0), this.rotation.y);
+                    
+                    this.velocity.x = moveVector.x;
+                    this.velocity.z = moveVector.z;
+                } else {
+                    this.velocity.x *= 0.8;
+                    this.velocity.z *= 0.8;
+                }
+
+                // Jump
+                if (input.jump && this.isGrounded && this.canJump) {
+                    this.velocity.y = config.jumpVelocity;
+                    this.canJump = false;
+                }
+                
+                if (!input.jump) {
+                    this.canJump = true;
+                }
+
+                // Apply velocity
+                const nextPosition = this.position.clone().add(
+                    this.velocity.clone().multiplyScalar(deltaTime)
+                );
+
+                // Simple collision detection
+                const footY = Math.floor(nextPosition.y - 1.5);
+                const headY = Math.floor(nextPosition.y + 0.3);
+                
+                // Check ground collision
+                if (this.velocity.y <= 0) {
+                    const groundBlock = world.getBlockAt(nextPosition.x, footY, nextPosition.z);
+                    if (groundBlock !== BlockType.AIR) {
+                        nextPosition.y = footY + 2.5;
+                        this.velocity.y = 0;
+                        this.isGrounded = true;
+                    } else {
+                        this.isGrounded = false;
+                    }
+                }
+
+                // Check ceiling collision
+                if (this.velocity.y > 0) {
+                    const ceilingBlock = world.getBlockAt(nextPosition.x, headY, nextPosition.z);
+                    if (ceilingBlock !== BlockType.AIR) {
+                        this.velocity.y = 0;
+                    }
+                }
+
+                // Update position
+                this.position.copy(nextPosition);
+
+                // Update camera
+                camera.position.copy(this.position);
+                camera.position.y += 0.5;
+                camera.rotation.order = 'YXZ';
+                camera.rotation.y = this.rotation.y;
+                camera.rotation.x = this.rotation.x;
+            }
+        }
+
+        // Input handling
+        class InputHandler {
+            constructor() {
+                this.keys = {};
+                this.mouse = { x: 0, y: 0, locked: false };
+                this.touch = { active: false, startX: 0, startY: 0, currentX: 0, currentY: 0 };
+                this.joystick = { x: 0, y: 0, active: false };
+                
+                this.setupEventListeners();
+            }
+
+            setupEventListeners() {
+                // Keyboard
+                document.addEventListener('keydown', (e) => {
+                    this.keys[e.code] = true;
+                });
+                
+                document.addEventListener('keyup', (e) => {
+                    this.keys[e.code] = false;
+                });
+
+                // Mouse
+                canvas.addEventListener('click', () => {
+                    if (!this.mouse.locked && !this.isMobile()) {
+                        canvas.requestPointerLock();
+                    }
+                });
+
+                document.addEventListener('pointerlockchange', () => {
+                    this.mouse.locked = document.pointerLockElement === canvas;
+                });
+
+                document.addEventListener('mousemove', (e) => {
+                    if (this.mouse.locked) {
+                        this.mouse.x += e.movementX;
+                        this.mouse.y += e.movementY;
+                    }
+                });
+
+                // Mouse buttons
+                canvas.addEventListener('mousedown', (e) => {
+                    if (this.mouse.locked) {
+                        if (e.button === 0) this.breakBlock();
+                        if (e.button === 2) this.placeBlock();
+                    }
+                });
+
+                canvas.addEventListener('contextmenu', (e) => {
+                    e.preventDefault();
+                });
+
+                // Touch controls
+                canvas.addEventListener('touchstart', (e) => {
+                    if (!this.joystick.active && e.touches.length === 1) {
+                        this.touch.active = true;
+                        this.touch.startX = e.touches[0].clientX;
+                        this.touch.startY = e.touches[0].clientY;
+                        this.touch.currentX = this.touch.startX;
+                        this.touch.currentY = this.touch.startY;
+                    }
+                });
+
+                canvas.addEventListener('touchmove', (e) => {
+                    if (this.touch.active && e.touches.length === 1) {
+                        e.preventDefault();
+                        this.touch.currentX = e.touches[0].clientX;
+                        this.touch.currentY = e.touches[0].clientY;
+                        
+                        const deltaX = this.touch.currentX - this.touch.startX;
+                        const deltaY = this.touch.currentY - this.touch.startY;
+                        
+                        this.mouse.x += deltaX * config.mobileMoveSensitivity;
+                        this.mouse.y += deltaY * config.mobileMoveSensitivity;
+                        
+                        this.touch.startX = this.touch.currentX;
+                        this.touch.startY = this.touch.currentY;
+                    }
+                });
+
+                canvas.addEventListener('touchend', () => {
+                    this.touch.active = false;
+                });
+
+                // Mobile controls
+                this.setupMobileControls();
+
+                // Window resize
+                window.addEventListener('resize', updateRendererSize);
+            }
+
+            setupMobileControls() {
+                // Joystick
+                const joystick = document.getElementById('joystick');
+                const joystickKnob = document.getElementById('joystick-knob');
+                
+                const handleJoystick = (e) => {
+                    const touch = e.touches[0];
+                    const rect = joystick.getBoundingClientRect();
+                    const centerX = rect.left + rect.width / 2;
+                    const centerY = rect.top + rect.height / 2;
+                    
+                    let deltaX = touch.clientX - centerX;
+                    let deltaY = touch.clientY - centerY;
+                    
+                    const distance = Math.sqrt(deltaX * deltaX + deltaY * deltaY);
+                    const maxDistance = rect.width / 2 - 20;
+                    
+                    if (distance > maxDistance) {
+                        deltaX = (deltaX / distance) * maxDistance;
+                        deltaY = (deltaY / distance) * maxDistance;
+                    }
+                    
+                    joystickKnob.style.transform = `translate(calc(-50% + ${deltaX}px), calc(-50% + ${deltaY}px))`;
+                    
+                    this.joystick.x = deltaX / maxDistance;
+                    this.joystick.y = deltaY / maxDistance;
+                };
+
+                joystick.addEventListener('touchstart', (e) => {
+                    e.preventDefault();
+                    this.joystick.active = true;
+                    handleJoystick(e);
+                });
+
+                joystick.addEventListener('touchmove', (e) => {
+                    e.preventDefault();
+                    if (this.joystick.active) {
+                        handleJoystick(e);
+                    }
+                });
+
+                joystick.addEventListener('touchend', () => {
+                    this.joystick.active = false;
+                    this.joystick.x = 0;
+                    this.joystick.y = 0;
+                    joystickKnob.style.transform = 'translate(-50%, -50%)';
+                });
+
+                // Action buttons
+                document.getElementById('jumpBtn').addEventListener('touchstart', (e) => {
+                    e.preventDefault();
+                    this.keys['Space'] = true;
+                });
+                
+                document.getElementById('jumpBtn').addEventListener('touchend', (e) => {
+                    e.preventDefault();
+                    this.keys['Space'] = false;
+                });
+
+                document.getElementById('breakBtn').addEventListener('click', () => {
+                    this.breakBlock();
+                });
+
+                document.getElementById('placeBtn').addEventListener('click', () => {
+                    this.placeBlock();
+                });
+            }
+
+            getInput() {
+                const input = {
+                    forward: this.keys['KeyW'] || this.keys['ArrowUp'] || this.joystick.y < -0.3,
+                    backward: this.keys['KeyS'] || this.keys['ArrowDown'] || this.joystick.y > 0.3,
+                    left: this.keys['KeyA'] || this.keys['ArrowLeft'] || this.joystick.x < -0.3,
+                    right: this.keys['KeyD'] || this.keys['ArrowRight'] || this.joystick.x > 0.3,
+                    jump: this.keys['Space'],
+                    mouseX: this.mouse.x,
+                    mouseY: this.mouse.y
+                };
+
+                // Apply mouse movement to player rotation
+                if (this.mouse.locked || this.touch.active || this.isMobile()) {
+                    player.rotation.y -= this.mouse.x * config.mouseSensitivity;
+                    player.rotation.x -= this.mouse.y * config.mouseSensitivity;
+                    player.rotation.x = Math.max(-Math.PI / 2, Math.min(Math.PI / 2, player.rotation.x));
+                    
+                    this.mouse.x = 0;
+                    this.mouse.y = 0;
+                }
+
+                return input;
+            }
+
+            breakBlock() {
+                const raycaster = new THREE.Raycaster();
+                raycaster.setFromCamera(new THREE.Vector2(0, 0), camera);
+                
+                const pos = player.position.clone();
+                pos.y += 0.5;
+                
+                for (let i = 0; i < 50; i++) {
+                    const checkPos = pos.clone().add(
+                        raycaster.ray.direction.clone().multiplyScalar(i * 0.1)
+                    );
+                    
+                    const block = world.getBlockAt(checkPos.x, checkPos.y, checkPos.z);
+                    if (block !== BlockType.AIR) {
+                        world.setBlockAt(checkPos.x, checkPos.y, checkPos.z, BlockType.AIR);
+                        break;
+                    }
+                }
+            }
+
+            placeBlock() {
+                const raycaster = new THREE.Raycaster();
+                raycaster.setFromCamera(new THREE.Vector2(0, 0), camera);
+                
+                const pos = player.position.clone();
+                pos.y += 0.5;
+                
+                let lastEmpty = null;
+                
+                for (let i = 0; i < 50; i++) {
+                    const checkPos = pos.clone().add(
+                        raycaster.ray.direction.clone().multiplyScalar(i * 0.1)
+                    );
+                    
+                    const block = world.getBlockAt(checkPos.x, checkPos.y, checkPos.z);
+                    
+                    if (block === BlockType.AIR) {
+                        lastEmpty = checkPos.clone();
+                    } else if (lastEmpty) {
+                        // Don't place block if it would intersect with player
+                        const playerFeet = player.position.y - 1.5;
+                        const playerHead = player.position.y + 0.5;
+                        const blockY = Math.floor(lastEmpty.y);
+                        
+                        if (Math.floor(lastEmpty.x) === Math.floor(player.position.x) &&
+                            Math.floor(lastEmpty.z) === Math.floor(player.position.z) &&
+                            blockY >= playerFeet && blockY <= playerHead) {
+                            return;
+                        }
+                        
+                        world.setBlockAt(lastEmpty.x, lastEmpty.y, lastEmpty.z, BlockType.STONE);
+                        break;
+                    }
+                }
+            }
+
+            isMobile() {
+                return window.matchMedia('(max-width: 768px)').matches || 
+                       window.matchMedia('(pointer: coarse)').matches;
+            }
+        }
+
+        // Initialize game
+        const world = new World();
+        const player = new Player();
+        const inputHandler = new InputHandler();
+
+        // Game loop
+        let lastTime = performance.now();
+        
+        function animate() {
+            requestAnimationFrame(animate);
+            
+            const currentTime = performance.now();
+            const deltaTime = Math.min((currentTime - lastTime) / 1000, 0.1);
+            lastTime = currentTime;
+
+            // Update FPS counter
+            stats.frameTime = currentTime - stats.lastTime;
+            stats.fps = Math.round(1000 / stats.frameTime);
+            stats.lastTime = currentTime;
+
+            // Update game
+            const input = inputHandler.getInput();
+            player.update(deltaTime, input);
+            world.updateChunksAroundPlayer(player.position.x, player.position.z);
+
+            // Update HUD
+            document.getElementById('fps').textContent = `FPS: ${stats.fps}`;
+            document.getElementById('coords').textContent = 
+                `X: ${Math.floor(player.position.x)} Y: ${Math.floor(player.position.y)} Z: ${Math.floor(player.position.z)}`;
+            document.getElementById('debug').textContent = 
+                `Faces: ${stats.totalFaces} | Chunks: ${stats.visibleChunks}/${stats.totalChunks}`;
+
+            // Render
+            renderer.render(scene, camera);
+        }
+
+        // Start game
+        window.addEventListener('load', () => {
+            // Hide loading screen
+            setTimeout(() => {
+                document.getElementById('loadingProgress').style.width = '100%';
+                setTimeout(() => {
+                    document.getElementById('loading').style.display = 'none';
+                    animate();
+                }, 300);
+            }, 100);
+        });
+    </script>
+</body>
+</html>
