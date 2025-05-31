@@ -1,7 +1,8 @@
 import { config, stats } from '../config.js';
 import { Chunk } from './Chunk.js';
+import { ChunkLoader } from './ChunkLoader.js';
 
-// Frustum Culling Class
+// Frustum Culling Class (mantener para compatibilidad)
 class FrustumCuller {
     constructor() {
         this.frustum = new THREE.Frustum();
@@ -34,10 +35,20 @@ class FrustumCuller {
 
 // World management
 export class World {
-    constructor() {
+    constructor(scene) {
+        this.scene = scene;
         this.chunks = new Map();
         this.loadedChunks = new Set();
         this.frustumCuller = new FrustumCuller();
+        
+        // NUEVO: Sistema avanzado de carga de chunks
+        this.useAdvancedLoader = true; // Flag para activar/desactivar
+        if (this.useAdvancedLoader) {
+            this.chunkLoader = new ChunkLoader(this, scene);
+        }
+        
+        // Seed para generación procedural
+        this.seed = Math.floor(Math.random() * 1000000);
     }
 
     getChunkKey(x, z) {
@@ -59,12 +70,27 @@ export class World {
         const localX = ((worldX % config.chunkSize) + config.chunkSize) % config.chunkSize;
         const localZ = ((worldZ % config.chunkSize) + config.chunkSize) % config.chunkSize;
         
+        // Si usamos el loader avanzado, buscar en su spatial grid
+        if (this.useAdvancedLoader && this.chunkLoader) {
+            const chunk = this.chunkLoader.getChunkAt(worldX, worldZ);
+            if (chunk && chunk.blocks) {
+                const index = localX + worldY * config.chunkSize + localZ * config.chunkSize * config.chunkSize;
+                return chunk.blocks[index] || 0;
+            }
+        }
+        
         const chunk = this.getChunk(chunkX, chunkZ);
         return chunk.getBlock(localX, worldY, localZ);
     }
 
     updateChunksAroundPlayer(playerX, playerZ, camera, scene) {
-        // Update frustum with current camera
+        // NUEVO: Usar el sistema avanzado si está activado
+        if (this.useAdvancedLoader && this.chunkLoader) {
+            this.chunkLoader.update({ x: playerX, z: playerZ }, camera);
+            return;
+        }
+        
+        // Sistema original (fallback)
         this.frustumCuller.update(camera);
         
         const chunkX = Math.floor(playerX / config.chunkSize);
@@ -151,5 +177,41 @@ export class World {
                 chunk.updateMesh(scene);
             }
         });
+    }
+    
+    // NUEVO: Obtener estadísticas del sistema
+    getStats() {
+        if (this.useAdvancedLoader && this.chunkLoader) {
+            return {
+                ...this.chunkLoader.getStats(),
+                poolStats: this.chunkLoader.chunkPool.getStats(),
+                cacheStats: this.chunkLoader.cache.getStats(),
+                gridStats: this.chunkLoader.spatialGrid.getStats()
+            };
+        }
+        
+        return {
+            chunksLoaded: this.loadedChunks.size,
+            totalChunks: this.chunks.size
+        };
+    }
+    
+    // NUEVO: Limpiar recursos
+    dispose() {
+        if (this.useAdvancedLoader && this.chunkLoader) {
+            this.chunkLoader.dispose();
+        }
+        
+        // Limpiar chunks existentes
+        for (const chunk of this.chunks.values()) {
+            if (chunk.mesh) {
+                this.scene.remove(chunk.mesh);
+                chunk.mesh.geometry.dispose();
+                chunk.mesh.material.dispose();
+            }
+        }
+        
+        this.chunks.clear();
+        this.loadedChunks.clear();
     }
 }
