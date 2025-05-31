@@ -1,44 +1,83 @@
 <!DOCTYPE html>
-<html lang="es">
+<html lang="en">
 <head>
     <meta charset="UTF-8">
-    <meta name="viewport" content="width=device-width, initial-scale=1.0, user-scalable=no, maximum-scale=1.0">
-    <title>Minecraft AI Voxel - Professional Three.js Game</title>
+    <meta name="viewport" content="width=device-width, initial-scale=1.0, maximum-scale=1.0, user-scalable=no">
+    <title>Minecraft AI Voxel</title>
     <link rel="stylesheet" href="css/styles.css">
+    <script src="https://cdnjs.cloudflare.com/ajax/libs/three.js/r128/three.min.js"></script>
 </head>
 <body>
     <!-- Loading Screen -->
     <div id="loading">
-        <h2>Cargando Minecraft AI Voxel...</h2>
-        <div class="loading-bar">
-            <div class="loading-progress" id="loadingProgress"></div>
+        <div class="loading-content">
+            <h1>Minecraft AI Voxel</h1>
+            <div class="loading-bar">
+                <div id="loadingProgress" class="loading-progress"></div>
+            </div>
+            <p>Loading world...</p>
         </div>
     </div>
 
     <!-- Game Canvas -->
     <canvas id="gameCanvas"></canvas>
-    
-    <!-- HUD Elements -->
-    <div id="fps" class="hud">FPS: 0</div>
-    <div id="coords" class="hud">X: 0 Y: 0 Z: 0</div>
-    <div id="debug" class="hud">Faces: 0 | Chunks: 0/0</div>
-    <div id="crosshair"></div>
-    
-    <!-- Mobile Controls -->
-    <div id="joystick" class="mobile-controls">
-        <div id="joystick-knob"></div>
-    </div>
-    
-    <div class="action-buttons mobile-controls">
-        <button class="action-btn" id="jumpBtn">JUMP</button>
-        <button class="action-btn" id="placeBtn">PLACE</button>
-        <button class="action-btn" id="breakBtn">BREAK</button>
+
+    <!-- HUD -->
+    <div id="hud">
+        <div id="fps">FPS: 0</div>
+        <div id="coords">X: 0 Y: 0 Z: 0</div>
+        <div id="debug">Debug info</div>
+        <div id="workerStatus">Workers: disabled</div>
     </div>
 
-    <!-- Three.js from CDN -->
-    <script src="https://cdnjs.cloudflare.com/ajax/libs/three.js/r128/three.min.js"></script>
-    
-    <!-- Game modules -->
+    <!-- Mobile Controls -->
+    <div id="mobileControls">
+        <div id="joystick" class="joystick">
+            <div id="joystick-knob" class="joystick-knob"></div>
+        </div>
+        <div class="action-buttons">
+            <button id="jumpBtn" class="action-btn">JUMP</button>
+            <button id="breakBtn" class="action-btn">BREAK</button>
+            <button id="placeBtn" class="action-btn">PLACE</button>
+        </div>
+    </div>
+
+    <!-- Settings Panel -->
+    <div id="settingsPanel" style="display: none;">
+        <h3>Settings</h3>
+        <label>
+            <input type="checkbox" id="toggleWorkers" onchange="toggleWorkers()">
+            Enable Web Workers (Experimental)
+        </label>
+        <button onclick="toggleSettings()">Close</button>
+    </div>
+
+    <!-- Settings Button -->
+    <button id="settingsBtn" onclick="toggleSettings()" style="position: fixed; top: 10px; right: 10px; z-index: 1000;">⚙️</button>
+
+    <!-- Game Scripts -->
     <script type="module" src="js/main.js"></script>
+    
+    <!-- Settings Script -->
+    <script>
+        function toggleSettings() {
+            const panel = document.getElementById('settingsPanel');
+            panel.style.display = panel.style.display === 'none' ? 'block' : 'none';
+        }
+        
+        function toggleWorkers() {
+            const checkbox = document.getElementById('toggleWorkers');
+            // This will be handled by the game code
+            window.dispatchEvent(new CustomEvent('toggleWorkers', { detail: checkbox.checked }));
+        }
+        
+        // Update worker status display
+        setInterval(() => {
+            const workerStatus = document.getElementById('workerStatus');
+            if (window.gameStats && window.gameStats.workerStatus) {
+                workerStatus.textContent = `Workers: ${window.gameStats.workerStatus}`;
+            }
+        }, 1000);
+    </script>
 </body>
 </html>
