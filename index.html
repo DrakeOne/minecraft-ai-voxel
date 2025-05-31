@@ -109,10 +109,13 @@
             }
         }
         
+        /* Joystick with fallback for older browsers */
         #joystick {
             position: fixed;
-            bottom: calc(20px + env(safe-area-inset-bottom));
-            left: calc(20px + env(safe-area-inset-left));
+            bottom: 20px;
+            bottom: calc(20px + env(safe-area-inset-bottom, 0px));
+            left: 20px;
+            left: calc(20px + env(safe-area-inset-left, 0px));
             width: clamp(100px, 20vw, 120px);
             height: clamp(100px, 20vw, 120px);
             background: rgba(255,255,255,0.1);
@@ -134,8 +137,10 @@
         
         .action-buttons {
             position: fixed;
-            bottom: calc(20px + env(safe-area-inset-bottom));
-            right: calc(20px + env(safe-area-inset-right));
+            bottom: 20px;
+            bottom: calc(20px + env(safe-area-inset-bottom, 0px));
+            right: 20px;
+            right: calc(20px + env(safe-area-inset-right, 0px));
             display: flex;
             gap: clamp(8px, 2vw, 10px);
             flex-direction: column;
@@ -616,39 +621,39 @@
                 // Counter-clockwise when viewed from outside the cube
                 let faceVertices;
                 if (faceName === 'top') {
-                    // Looking down at the top face
+                    // Looking down at the top face (from +Y)
                     faceVertices = [
-                        [x - half, y + half, z + half], // 0: front-left
-                        [x + half, y + half, z + half], // 1: front-right
-                        [x + half, y + half, z - half], // 2: back-right
-                        [x - half, y + half, z - half]  // 3: back-left
+                        [x - half, y + half, z - half], // 0: back-left
+                        [x + half, y + half, z - half], // 1: back-right
+                        [x + half, y + half, z + half], // 2: front-right
+                        [x - half, y + half, z + half]  // 3: front-left
                     ];
                 } else if (faceName === 'bottom') {
-                    // Looking up at the bottom face
+                    // Looking up at the bottom face (from -Y)
                     faceVertices = [
-                        [x - half, y - half, z - half], // 0: back-left
-                        [x + half, y - half, z - half], // 1: back-right
-                        [x + half, y - half, z + half], // 2: front-right
-                        [x - half, y - half, z + half]  // 3: front-left
+                        [x - half, y - half, z + half], // 0: front-left
+                        [x + half, y - half, z + half], // 1: front-right
+                        [x + half, y - half, z - half], // 2: back-right
+                        [x - half, y - half, z - half]  // 3: back-left
                     ];
                 } else if (faceName === 'right') {
-                    // Looking at the right face from the left
+                    // Looking at the right face from outside (from +X)
                     faceVertices = [
-                        [x + half, y - half, z + half], // 0: bottom-front
-                        [x + half, y - half, z - half], // 1: bottom-back
-                        [x + half, y + half, z - half], // 2: top-back
-                        [x + half, y + half, z + half]  // 3: top-front
+                        [x + half, y - half, z - half], // 0: bottom-back
+                        [x + half, y - half, z + half], // 1: bottom-front
+                        [x + half, y + half, z + half], // 2: top-front
+                        [x + half, y + half, z - half]  // 3: top-back
                     ];
                 } else if (faceName === 'left') {
-                    // Looking at the left face from the right
+                    // Looking at the left face from outside (from -X)
                     faceVertices = [
-                        [x - half, y - half, z - half], // 0: bottom-back
-                        [x - half, y - half, z + half], // 1: bottom-front
-                        [x - half, y + half, z + half], // 2: top-front
-                        [x - half, y + half, z - half]  // 3: top-back
+                        [x - half, y - half, z + half], // 0: bottom-front
+                        [x - half, y - half, z - half], // 1: bottom-back
+                        [x - half, y + half, z - half], // 2: top-back
+                        [x - half, y + half, z + half]  // 3: top-front
                     ];
                 } else if (faceName === 'front') {
-                    // Looking at the front face
+                    // Looking at the front face (from +Z)
                     faceVertices = [
                         [x - half, y - half, z + half], // 0: bottom-left
                         [x + half, y - half, z + half], // 1: bottom-right
@@ -656,7 +661,7 @@
                         [x - half, y + half, z + half]  // 3: top-left
                     ];
                 } else if (faceName === 'back') {
-                    // Looking at the back face
+                    // Looking at the back face (from -Z)
                     faceVertices = [
                         [x + half, y - half, z - half], // 0: bottom-right
                         [x - half, y - half, z - half], // 1: bottom-left
