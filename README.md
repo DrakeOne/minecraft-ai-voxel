@@ -6,6 +6,15 @@ Un juego profesional tipo Minecraft construido con Three.js, optimizado para ren
 
 [Jugar ahora](https://drakeone.github.io/minecraft-ai-voxel/)
 
+## 📊 Análisis Profesional
+
+Se ha realizado un análisis técnico exhaustivo del proyecto. Consulta los siguientes documentos:
+
+- 📋 **[Análisis Técnico Completo](PROFESSIONAL_ANALYSIS.md)** - Evaluación detallada de la arquitectura
+- 🚀 **[Guía de Optimización](OPTIMIZATION_GUIDE.md)** - Implementaciones con código para mejoras de rendimiento
+- 📈 **[Benchmarks de Rendimiento](PERFORMANCE_BENCHMARKS.md)** - Métricas actuales y proyecciones
+- 📊 **[Resumen del Análisis](docs/ANALYSIS_SUMMARY.md)** - Resumen ejecutivo con hallazgos clave
+
 ## ✨ Características
 
 ### 🎯 Gameplay
