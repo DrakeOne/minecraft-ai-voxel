@@ -2,7 +2,7 @@
 <html lang="es">
 <head>
     <meta charset="UTF-8">
-    <meta name="viewport" content="width=device-width, initial-scale=1.0, user-scalable=no">
+    <meta name="viewport" content="width=device-width, initial-scale=1.0, user-scalable=no, maximum-scale=1.0">
     <title>Minecraft AI Voxel - Professional Three.js Game</title>
     <style>
         * {
@@ -11,18 +11,24 @@
             box-sizing: border-box;
         }
         
-        body {
+        html, body {
+            width: 100%;
+            height: 100%;
             font-family: -apple-system, BlinkMacSystemFont, 'Segoe UI', Roboto, sans-serif;
             overflow: hidden;
             touch-action: none;
             -webkit-user-select: none;
             user-select: none;
+            position: fixed;
         }
         
         #gameCanvas {
             display: block;
-            width: 100vw;
-            height: 100vh;
+            width: 100%;
+            height: 100%;
+            position: absolute;
+            top: 0;
+            left: 0;
         }
         
         /* HUD */
@@ -32,18 +38,19 @@
             text-shadow: 2px 2px 4px rgba(0,0,0,0.8);
             font-weight: bold;
             pointer-events: none;
+            z-index: 10;
         }
         
         #fps {
             top: 10px;
             left: 10px;
-            font-size: 14px;
+            font-size: clamp(12px, 2vw, 14px);
         }
         
         #coords {
             top: 30px;
             left: 10px;
-            font-size: 12px;
+            font-size: clamp(10px, 1.8vw, 12px);
         }
         
         #crosshair {
@@ -54,6 +61,7 @@
             width: 20px;
             height: 20px;
             pointer-events: none;
+            z-index: 10;
         }
         
         #crosshair::before,
@@ -78,22 +86,27 @@
         
         /* Mobile Controls */
         .mobile-controls {
-            position: absolute;
-            bottom: 20px;
+            position: fixed;
             display: none;
             touch-action: none;
+            z-index: 20;
         }
         
         @media (max-width: 768px), (pointer: coarse) {
             .mobile-controls {
                 display: block;
             }
+            
+            #crosshair {
+                display: none;
+            }
         }
         
         #joystick {
+            bottom: 20px;
             left: 20px;
-            width: 120px;
-            height: 120px;
+            width: clamp(100px, 20vw, 120px);
+            height: clamp(100px, 20vw, 120px);
             background: rgba(255,255,255,0.1);
             border: 2px solid rgba(255,255,255,0.3);
             border-radius: 50%;
@@ -102,8 +115,8 @@
         
         #joystick-knob {
             position: absolute;
-            width: 40px;
-            height: 40px;
+            width: 40%;
+            height: 40%;
             background: rgba(255,255,255,0.5);
             border-radius: 50%;
             top: 50%;
@@ -113,21 +126,22 @@
         }
         
         .action-buttons {
+            bottom: 20px;
             right: 20px;
             display: flex;
-            gap: 10px;
+            gap: clamp(8px, 2vw, 10px);
             flex-direction: column;
         }
         
         .action-btn {
-            width: 60px;
-            height: 60px;
+            width: clamp(50px, 12vw, 60px);
+            height: clamp(50px, 12vw, 60px);
             background: rgba(255,255,255,0.2);
             border: 2px solid rgba(255,255,255,0.4);
             border-radius: 50%;
             color: white;
             font-weight: bold;
-            font-size: 12px;
+            font-size: clamp(10px, 2.5vw, 12px);
             display: flex;
             align-items: center;
             justify-content: center;
@@ -142,7 +156,7 @@
         
         /* Loading Screen */
         #loading {
-            position: absolute;
+            position: fixed;
             top: 0;
             left: 0;
             width: 100%;
@@ -156,8 +170,13 @@
             z-index: 1000;
         }
         
+        #loading h2 {
+            font-size: clamp(18px, 4vw, 24px);
+            margin-bottom: 20px;
+        }
+        
         .loading-bar {
-            width: 200px;
+            width: min(200px, 80vw);
             height: 4px;
             background: rgba(255,255,255,0.2);
             margin-top: 20px;
@@ -170,6 +189,15 @@
             background: #4CAF50;
             width: 0%;
             transition: width 0.3s ease;
+        }
+        
+        /* Prevent iOS bounce */
+        @supports (-webkit-touch-callout: none) {
+            body {
+                position: fixed;
+                width: 100%;
+                height: 100%;
+            }
         }
     </style>
 </head>
@@ -205,6 +233,10 @@
     <script src="https://cdnjs.cloudflare.com/ajax/libs/three.js/r128/three.min.js"></script>
     
     <script>
+        // Prevent iOS bounce and ensure proper sizing
+        document.addEventListener('gesturestart', e => e.preventDefault());
+        document.addEventListener('gesturechange', e => e.preventDefault());
+        
         // Performance monitoring
         const stats = {
             fps: 0,
@@ -260,11 +292,29 @@
         const renderer = new THREE.WebGLRenderer({
             canvas,
             antialias: false, // Disable for better performance
-            powerPreference: "high-performance"
+            powerPreference: "high-performance",
+            alpha: false,
+            stencil: false,
+            depth: true
         });
-        renderer.setSize(window.innerWidth, window.innerHeight);
-        renderer.setPixelRatio(Math.min(window.devicePixelRatio, 2));
-        renderer.shadowMap.enabled = false; // Disable shadows for performance
+        
+        // Ensure proper sizing
+        function updateRendererSize() {
+            const width = window.innerWidth;
+            const height = window.innerHeight;
+            
+            renderer.setSize(width, height, false);
+            renderer.setPixelRatio(Math.min(window.devicePixelRatio, 2));
+            
+            camera.aspect = width / height;
+            camera.updateProjectionMatrix();
+        }
+        
+        updateRendererSize();
+
+        // Enable backface culling
+        renderer.shadowMap.enabled = false;
+        renderer.sortObjects = true;
 
         // Lighting
         const ambientLight = new THREE.AmbientLight(0xffffff, 0.6);
@@ -339,6 +389,8 @@
                 const vertices = [];
                 const normals = [];
                 const colors = [];
+                const indices = [];
+                let vertexCount = 0;
 
                 // Generate visible faces only (culling)
                 for (let x = 0; x < config.chunkSize; x++) {
@@ -365,7 +417,16 @@
 
                             faces.forEach(face => {
                                 if (this.getBlock(...face.check) === BlockType.AIR) {
+                                    const startVertex = vertexCount;
                                     this.addFace(vertices, normals, colors, worldX, worldY, worldZ, face.dir, color);
+                                    
+                                    // Add indices for the face (2 triangles)
+                                    indices.push(
+                                        startVertex, startVertex + 1, startVertex + 2,
+                                        startVertex, startVertex + 2, startVertex + 3
+                                    );
+                                    
+                                    vertexCount += 4;
                                 }
                             });
                         }
@@ -376,14 +437,22 @@
                 geometry.setAttribute('position', new THREE.Float32BufferAttribute(vertices, 3));
                 geometry.setAttribute('normal', new THREE.Float32BufferAttribute(normals, 3));
                 geometry.setAttribute('color', new THREE.Float32BufferAttribute(colors, 3));
+                geometry.setIndex(indices);
+                
+                // Compute bounding box for frustum culling
+                geometry.computeBoundingBox();
+                geometry.computeBoundingSphere();
 
-                // Create mesh with vertex colors
+                // Create mesh with proper material settings
                 const material = new THREE.MeshLambertMaterial({ 
                     vertexColors: true,
-                    side: THREE.FrontSide
+                    side: THREE.FrontSide, // Only render front faces
+                    flatShading: true
                 });
 
                 this.mesh = new THREE.Mesh(geometry, material);
+                this.mesh.matrixAutoUpdate = false;
+                this.mesh.updateMatrix();
                 scene.add(this.mesh);
 
                 this.needsUpdate = false;
@@ -392,7 +461,7 @@
             addFace(vertices, normals, colors, x, y, z, dir, color) {
                 const half = config.blockSize / 2;
 
-                // Face vertices based on direction
+                // Face vertices based on direction (corrected winding order)
                 let faceVertices;
                 if (dir[1] === 1) { // top
                     faceVertices = [
@@ -403,10 +472,10 @@
                     ];
                 } else if (dir[1] === -1) { // bottom
                     faceVertices = [
+                        [x - half, y - half, z - half],
                         [x - half, y - half, z + half],
                         [x + half, y - half, z + half],
-                        [x + half, y - half, z - half],
-                        [x - half, y - half, z - half]
+                        [x + half, y - half, z - half]
                     ];
                 } else if (dir[0] === 1) { // right
                     faceVertices = [
@@ -438,10 +507,9 @@
                     ];
                 }
 
-                // Add two triangles for the face
-                const indices = [0, 1, 2, 0, 2, 3];
-                indices.forEach(i => {
-                    vertices.push(...faceVertices[i]);
+                // Add vertices for the face
+                faceVertices.forEach(vertex => {
+                    vertices.push(...vertex);
                     normals.push(...dir);
                     colors.push(color.r, color.g, color.b);
                 });
@@ -524,6 +592,12 @@
                 const chunk = this.getChunk(chunkX, chunkZ);
                 chunk.setBlock(localX, Math.floor(y), localZ, type);
                 chunk.updateMesh();
+                
+                // Update adjacent chunks if necessary
+                if (localX === 0) this.getChunk(chunkX - 1, chunkZ).updateMesh();
+                if (localX === config.chunkSize - 1) this.getChunk(chunkX + 1, chunkZ).updateMesh();
+                if (localZ === 0) this.getChunk(chunkX, chunkZ - 1).updateMesh();
+                if (localZ === config.chunkSize - 1) this.getChunk(chunkX, chunkZ + 1).updateMesh();
             }
         }
 
@@ -875,13 +949,19 @@
 
         // Handle window resize
         window.addEventListener('resize', () => {
-            camera.aspect = window.innerWidth / window.innerHeight;
-            camera.updateProjectionMatrix();
-            renderer.setSize(window.innerWidth, window.innerHeight);
+            updateRendererSize();
+        });
+
+        // Handle orientation change
+        window.addEventListener('orientationchange', () => {
+            setTimeout(updateRendererSize, 100);
         });
 
         // Hide loading screen and start game
         window.addEventListener('load', () => {
+            // Ensure proper initial sizing
+            updateRendererSize();
+            
             setTimeout(() => {
                 document.getElementById('loadingProgress').style.width = '100%';
                 setTimeout(() => {
@@ -896,6 +976,15 @@
             if (e.target.closest('.mobile-controls')) return;
             e.preventDefault();
         }, { passive: false });
+
+        // Handle visibility change
+        document.addEventListener('visibilitychange', () => {
+            if (document.hidden) {
+                // Pause game logic if needed
+            } else {
+                lastTime = performance.now(); // Reset delta time
+            }
+        });
     </script>
 </body>
 </html>
