@@ -89,15 +89,8 @@ export class World {
         const localX = ((worldX % config.chunkSize) + config.chunkSize) % config.chunkSize;
         const localZ = ((worldZ % config.chunkSize) + config.chunkSize) % config.chunkSize;
         
-        // Si usamos el loader avanzado, buscar en su spatial grid
-        if (this.useAdvancedLoader && this.chunkLoader) {
-            const chunk = this.chunkLoader.getChunkAt(worldX, worldZ);
-            if (chunk && chunk.blocks) {
-                const index = localX + worldY * config.chunkSize + localZ * config.chunkSize * config.chunkSize;
-                return chunk.blocks[index] || 0;
-            }
-        }
-        
+        // FIX: Simplemente usar el sistema de chunks normal
+        // No intentar usar ChunkLoader.getChunkAt que no existe
         const chunk = this.getChunk(chunkX, chunkZ);
         return chunk.getBlock(localX, worldY, localZ);
     }
