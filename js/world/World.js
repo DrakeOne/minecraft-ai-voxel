@@ -1,6 +1,7 @@
 import { config, stats } from '../config.js';
 import { Chunk } from './Chunk.js';
 import { ChunkLoader } from './ChunkLoader.js';
+import { WorkerManager } from './WorkerManager.js';
 
 // Frustum Culling Class (mantener para compatibilidad)
 class FrustumCuller {
@@ -42,9 +43,27 @@ export class World {
         this.frustumCuller = new FrustumCuller();
         
         // NUEVO: Sistema avanzado de carga de chunks
-        this.useAdvancedLoader = true; // Flag para activar/desactivar
+        this.useAdvancedLoader = config.features.useAdvancedLoader;
         if (this.useAdvancedLoader) {
             this.chunkLoader = new ChunkLoader(this, scene);
+        }
+        
+        // NUEVO: Worker Manager para generación asíncrona
+        this.workerManager = null;
+        if (config.features.useWorkers) {
+            console.log('[World] Attempting to initialize Web Workers...');
+            this.workerManager = new WorkerManager(this, scene);
+            
+            // Update stats based on worker status
+            setTimeout(() => {
+                if (this.workerManager && this.workerManager.isEnabled()) {
+                    stats.workerStatus = 'enabled';
+                    console.log('[World] Web Workers enabled successfully');
+                } else {
+                    stats.workerStatus = 'disabled';
+                    console.log('[World] Web Workers disabled or failed to initialize');
+                }
+            }, 1500);
         }
         
         // Seed para generación procedural
@@ -113,7 +132,19 @@ export class World {
                 
                 if (!this.loadedChunks.has(key)) {
                     const chunk = this.getChunk(cx, cz);
-                    chunk.updateMesh(scene);
+                    
+                    // NUEVO: Intentar usar workers si están disponibles
+                    if (this.workerManager && this.workerManager.isEnabled() && config.features.useWorkers) {
+                        // Request async generation
+                        const requested = this.workerManager.requestChunk(cx, cz);
+                        if (!requested && config.features.fallbackToSync) {
+                            // Fallback to sync if worker request failed
+                            chunk.updateMesh(scene);
+                        }
+                    } else {
+                        // Sync generation
+                        chunk.updateMesh(scene);
+                    }
                 }
             }
         }
@@ -181,8 +212,15 @@ export class World {
     
     // NUEVO: Obtener estadísticas del sistema
     getStats() {
+        const baseStats = {
+            chunksLoaded: this.loadedChunks.size,
+            totalChunks: this.chunks.size,
+            workerEnabled: this.workerManager ? this.workerManager.isEnabled() : false
+        };
+        
         if (this.useAdvancedLoader && this.chunkLoader) {
             return {
+                ...baseStats,
                 ...this.chunkLoader.getStats(),
                 poolStats: this.chunkLoader.chunkPool.getStats(),
                 cacheStats: this.chunkLoader.cache.getStats(),
@@ -190,14 +228,17 @@ export class World {
             };
         }
         
-        return {
-            chunksLoaded: this.loadedChunks.size,
-            totalChunks: this.chunks.size
-        };
+        return baseStats;
     }
     
     // NUEVO: Limpiar recursos
     dispose() {
+        // Dispose worker manager
+        if (this.workerManager) {
+            this.workerManager.dispose();
+            this.workerManager = null;
+        }
+        
         if (this.useAdvancedLoader && this.chunkLoader) {
             this.chunkLoader.dispose();
         }
