@@ -52,18 +52,25 @@ export class World {
         this.workerManager = null;
         if (config.features.useWorkers) {
             console.log('[World] Attempting to initialize Web Workers...');
-            this.workerManager = new WorkerManager(this, scene);
-            
-            // Update stats based on worker status
-            setTimeout(() => {
-                if (this.workerManager && this.workerManager.isEnabled()) {
-                    stats.workerStatus = 'enabled';
-                    console.log('[World] Web Workers enabled successfully');
-                } else {
-                    stats.workerStatus = 'disabled';
-                    console.log('[World] Web Workers disabled or failed to initialize');
-                }
-            }, 1500);
+            try {
+                this.workerManager = new WorkerManager(this, scene);
+                
+                // Update stats based on worker status
+                setTimeout(() => {
+                    if (this.workerManager && this.workerManager.isEnabled()) {
+                        stats.workerStatus = 'enabled';
+                        console.log('[World] Web Workers enabled successfully');
+                    } else {
+                        stats.workerStatus = 'disabled';
+                        console.log('[World] Web Workers disabled or failed to initialize');
+                        config.features.useWorkers = false;
+                    }
+                }, 1500);
+            } catch (error) {
+                console.error('[World] Failed to initialize WorkerManager:', error);
+                config.features.useWorkers = false;
+                stats.workerStatus = 'failed';
+            }
         }
         
         // Seed para generación procedural
