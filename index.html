@@ -55,6 +55,14 @@
             <input type="checkbox" id="toggleWorkers" onchange="toggleWorkers()">
             Enable Web Workers (Experimental)
         </label>
+        
+        <!-- NEW: Render Distance Slider -->
+        <div class="setting-item">
+            <label for="renderDistanceSlider">Render Distance: <span id="renderDistanceValue">4</span> chunks</label>
+            <input type="range" id="renderDistanceSlider" min="1" max="20" value="4" onchange="updateRenderDistance(this.value)">
+            <small id="renderDistanceWarning" style="color: #ff9800; display: none;">⚠️ High values may impact performance</small>
+        </div>
+        
         <button onclick="toggleSettings()">Close</button>
     </div>
 
@@ -75,6 +83,18 @@
             const checkbox = document.getElementById('toggleWorkers');
             // This will be handled by the game code
             window.dispatchEvent(new CustomEvent('toggleWorkers', { detail: checkbox.checked }));
+        }
+        
+        function updateRenderDistance(value) {
+            const intValue = parseInt(value);
+            document.getElementById('renderDistanceValue').textContent = intValue;
+            
+            // Show warning for high values
+            const warning = document.getElementById('renderDistanceWarning');
+            warning.style.display = intValue > 10 ? 'block' : 'none';
+            
+            // Dispatch event to game
+            window.dispatchEvent(new CustomEvent('updateRenderDistance', { detail: intValue }));
         }
         
         // Update worker status display
@@ -101,11 +121,17 @@
         // Initialize checkbox state
         window.addEventListener('load', () => {
             const checkbox = document.getElementById('toggleWorkers');
+            const slider = document.getElementById('renderDistanceSlider');
+            
             if (checkbox) {
                 // Set initial state from config if available
                 setTimeout(() => {
                     if (window.config && window.config.features) {
                         checkbox.checked = window.config.features.useWorkers;
+                    }
+                    if (window.config && slider) {
+                        slider.value = window.config.renderDistance;
+                        document.getElementById('renderDistanceValue').textContent = window.config.renderDistance;
                     }
                 }, 500);
             }
