@@ -1,7 +1,7 @@
 import { config } from '../config.js';
 import { BlockType } from '../config.js';
 
-// Player controller with FIXED physics
+// Player controller with FIXED physics and FLYING mode
 export class Player {
     constructor(world) {
         this.world = world;
@@ -11,6 +11,10 @@ export class Player {
         this.isGrounded = false;
         this.canJump = true;
         
+        // Flying mode
+        this.isFlying = false;
+        this.flySpeed = config.moveSpeed * 5; // 5x walking speed
+        
         // Player dimensions
         this.width = 0.8;
         this.height = 1.8;
@@ -18,6 +22,58 @@ export class Player {
     }
 
     update(deltaTime, input, camera) {
+        if (this.isFlying) {
+            this.updateFlying(deltaTime, input, camera);
+        } else {
+            this.updateWalking(deltaTime, input, camera);
+        }
+        
+        // Update camera
+        camera.position.copy(this.position);
+        camera.position.y += this.eyeHeight;
+        camera.rotation.order = 'YXZ';
+        camera.rotation.y = this.rotation.y;
+        camera.rotation.x = this.rotation.x;
+    }
+    
+    updateFlying(deltaTime, input, camera) {
+        // Movement in flying mode
+        const moveVector = new THREE.Vector3();
+        
+        if (input.forward) moveVector.z -= 1;
+        if (input.backward) moveVector.z += 1;
+        if (input.left) moveVector.x -= 1;
+        if (input.right) moveVector.x += 1;
+        if (input.up) moveVector.y += 1;
+        if (input.down) moveVector.y -= 1;
+
+        if (moveVector.length() > 0) {
+            moveVector.normalize();
+            moveVector.multiplyScalar(this.flySpeed);
+            
+            // Apply rotation (except for Y movement)
+            const horizontalVector = new THREE.Vector3(moveVector.x, 0, moveVector.z);
+            horizontalVector.applyAxisAngle(new THREE.Vector3(0, 1, 0), this.rotation.y);
+            
+            this.velocity.x = horizontalVector.x;
+            this.velocity.z = horizontalVector.z;
+            this.velocity.y = moveVector.y;
+        } else {
+            // Quick stop in flying mode
+            this.velocity.multiplyScalar(0.8);
+        }
+        
+        // Apply movement
+        this.position.add(this.velocity.clone().multiplyScalar(deltaTime));
+        
+        // Toggle flying mode
+        if (input.toggleFly) {
+            this.isFlying = false;
+            this.velocity.y = 0;
+        }
+    }
+    
+    updateWalking(deltaTime, input, camera) {
         // Apply gravity
         if (!this.isGrounded) {
             this.velocity.y += config.gravity * deltaTime;
@@ -58,16 +114,15 @@ export class Player {
         if (!input.jump) {
             this.canJump = true;
         }
+        
+        // Toggle flying mode
+        if (input.toggleFly) {
+            this.isFlying = true;
+            this.velocity.y = 0;
+        }
 
         // FIXED: Proper collision detection
         this.updatePosition(deltaTime);
-
-        // Update camera
-        camera.position.copy(this.position);
-        camera.position.y += this.eyeHeight;
-        camera.rotation.order = 'YXZ';
-        camera.rotation.y = this.rotation.y;
-        camera.rotation.x = this.rotation.x;
     }
 
     updatePosition(deltaTime) {
