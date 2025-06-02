@@ -208,6 +208,7 @@ self.onmessage = function(e) {
                 }
             }
             
+            // IMPORTANT: Return both mesh data AND the original blocks for physics
             self.postMessage({
                 type: 'MESH_GENERATED',
                 data: {
@@ -216,13 +217,15 @@ self.onmessage = function(e) {
                     vertices: new Float32Array(vertices).buffer,
                     normals: new Float32Array(normals).buffer,
                     colors: new Float32Array(colors).buffer,
-                    indices: new Uint32Array(indices).buffer
+                    indices: new Uint32Array(indices).buffer,
+                    blocks: blockArray.buffer // Return blocks for physics!
                 }
             }, [
                 new Float32Array(vertices).buffer,
                 new Float32Array(normals).buffer,
                 new Float32Array(colors).buffer,
-                new Uint32Array(indices).buffer
+                new Uint32Array(indices).buffer,
+                blockArray.buffer
             ]);
             
         } catch (error) {
@@ -246,6 +249,9 @@ export class WorkerManager {
         };
         this.pendingChunks = new Map();
         this.activeRequests = new Set();
+        
+        // Store terrain data temporarily
+        this.terrainDataCache = new Map();
         
         // Try to initialize workers
         this.tryInitialize();
@@ -357,9 +363,8 @@ export class WorkerManager {
             // Mark worker as available
             this.workers.terrain[workerId].busy = false;
             
-            // Update chunk
-            const chunk = this.world.getChunk(chunkX, chunkZ);
-            chunk.blocks = new Uint8Array(blocks);
+            // Store terrain data for later
+            this.terrainDataCache.set(key, new Uint8Array(blocks));
             
             // Generate mesh
             this.requestMesh(chunkX, chunkZ, blocks);
@@ -384,16 +389,26 @@ export class WorkerManager {
         const { type, data, error } = e.data;
         
         if (type === 'MESH_GENERATED') {
-            const { chunkX, chunkZ, vertices, normals, colors, indices } = data;
+            const { chunkX, chunkZ, vertices, normals, colors, indices, blocks } = data;
             const key = `${chunkX},${chunkZ}`;
             
             // Mark worker as available
             this.workers.mesh[workerId].busy = false;
             this.activeRequests.delete(key);
             
-            // Create mesh
+            // Get the chunk
             const chunk = this.world.getChunk(chunkX, chunkZ);
             
+            // CRITICAL FIX: Set the blocks data for physics!
+            if (blocks) {
+                chunk.blocks = new Uint8Array(blocks);
+            } else if (this.terrainDataCache.has(key)) {
+                // Fallback: use cached terrain data
+                chunk.blocks = this.terrainDataCache.get(key);
+                this.terrainDataCache.delete(key);
+            }
+            
+            // Create mesh only if we have vertices
             if (vertices.byteLength > 0) {
                 const geometry = new THREE.BufferGeometry();
                 geometry.setAttribute('position', new THREE.Float32BufferAttribute(new Float32Array(vertices), 3));
@@ -418,6 +433,9 @@ export class WorkerManager {
                 
                 chunk.mesh = new THREE.Mesh(geometry, material);
                 this.scene.add(chunk.mesh);
+                
+                // Mark chunk as no longer needing update
+                chunk.needsUpdate = false;
             }
             
             // Process pending chunks
@@ -521,6 +539,7 @@ export class WorkerManager {
         this.workers.mesh = [];
         this.pendingChunks.clear();
         this.activeRequests.clear();
+        this.terrainDataCache.clear();
         this.enabled = false;
         
         console.log('[WorkerManager] Disposed');
