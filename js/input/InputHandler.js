@@ -14,6 +14,9 @@ export class InputHandler {
         this.touch = { active: false, startX: 0, startY: 0, currentX: 0, currentY: 0 };
         this.joystick = { x: 0, y: 0, active: false };
         
+        // Flying controls state
+        this.flyTogglePressed = false;
+        
         this.setupEventListeners();
     }
 
@@ -184,6 +187,41 @@ export class InputHandler {
                 this.placeBlock();
             });
         }
+
+        // Flying controls
+        const flyBtn = document.getElementById('flyBtn');
+        if (flyBtn) {
+            flyBtn.addEventListener('click', () => {
+                this.flyTogglePressed = true;
+                flyBtn.textContent = this.player.isFlying ? 'WALK' : 'FLY';
+            });
+        }
+
+        const upBtn = document.getElementById('upBtn');
+        if (upBtn) {
+            upBtn.addEventListener('touchstart', (e) => {
+                e.preventDefault();
+                this.keys['KeyQ'] = true;
+            });
+            
+            upBtn.addEventListener('touchend', (e) => {
+                e.preventDefault();
+                this.keys['KeyQ'] = false;
+            });
+        }
+
+        const downBtn = document.getElementById('downBtn');
+        if (downBtn) {
+            downBtn.addEventListener('touchstart', (e) => {
+                e.preventDefault();
+                this.keys['KeyE'] = true;
+            });
+            
+            downBtn.addEventListener('touchend', (e) => {
+                e.preventDefault();
+                this.keys['KeyE'] = false;
+            });
+        }
     }
 
     getInput() {
@@ -193,9 +231,17 @@ export class InputHandler {
             left: this.keys['KeyA'] || this.keys['ArrowLeft'] || this.joystick.x < -0.3,
             right: this.keys['KeyD'] || this.keys['ArrowRight'] || this.joystick.x > 0.3,
             jump: this.keys['Space'],
+            up: this.keys['KeyQ'] || this.keys['ShiftLeft'], // Q or Shift for up
+            down: this.keys['KeyE'] || this.keys['ControlLeft'], // E or Ctrl for down
+            toggleFly: this.keys['KeyF'] || this.flyTogglePressed, // F key or mobile button
             mouseX: this.mouse.x,
             mouseY: this.mouse.y
         };
+
+        // Reset fly toggle
+        if (this.flyTogglePressed) {
+            this.flyTogglePressed = false;
+        }
 
         // Apply mouse movement to player rotation
         if (this.mouse.locked || this.touch.active || this.isMobile()) {
