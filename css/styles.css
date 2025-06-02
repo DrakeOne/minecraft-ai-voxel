@@ -79,6 +79,23 @@ body {
     margin-bottom: 5px;
 }
 
+/* Debug Overlay (F3) */
+.debug-overlay {
+    position: fixed;
+    top: 5px;
+    left: 5px;
+    background: rgba(0, 0, 0, 0.5);
+    color: white;
+    font-family: 'Courier New', monospace;
+    font-size: 12px;
+    padding: 10px;
+    white-space: pre;
+    line-height: 1.4;
+    z-index: 1000;
+    pointer-events: none;
+    text-shadow: 1px 1px 2px rgba(0,0,0,0.8);
+}
+
 /* Mobile controls */
 #mobileControls {
     display: none;
@@ -143,6 +160,43 @@ body {
     background: rgba(255, 255, 255, 0.5);
 }
 
+/* Flying controls */
+.vertical-buttons {
+    position: absolute;
+    bottom: 30px;
+    right: 130px;
+    display: flex;
+    flex-direction: column;
+    gap: 10px;
+    pointer-events: auto;
+}
+
+.vertical-btn {
+    width: 60px;
+    height: 60px;
+    background: rgba(255, 255, 255, 0.3);
+    border: 2px solid rgba(255, 255, 255, 0.5);
+    border-radius: 50%;
+    color: white;
+    font-weight: bold;
+    font-size: 20px;
+    cursor: pointer;
+    touch-action: manipulation;
+}
+
+.vertical-btn:active {
+    background: rgba(255, 255, 255, 0.5);
+}
+
+.fly-btn {
+    background: rgba(76, 175, 80, 0.3);
+    border-color: rgba(76, 175, 80, 0.5);
+}
+
+.fly-btn:active {
+    background: rgba(76, 175, 80, 0.5);
+}
+
 /* Settings Panel */
 #settingsPanel {
     position: fixed;
@@ -205,6 +259,12 @@ body {
     font-weight: bold;
 }
 
+/* Flying status */
+#flyStatus {
+    color: #4CAF50;
+    font-weight: bold;
+}
+
 /* Mobile detection */
 @media (max-width: 768px), (pointer: coarse) {
     #mobileControls {
@@ -232,6 +292,11 @@ body {
         right: calc(30px + env(safe-area-inset-right));
         bottom: calc(30px + env(safe-area-inset-bottom));
     }
+    
+    .vertical-buttons {
+        right: calc(130px + env(safe-area-inset-right));
+        bottom: calc(30px + env(safe-area-inset-bottom));
+    }
 }
 
 /* Prevent text selection */
@@ -257,5 +322,16 @@ body {
     .action-buttons {
         bottom: 20px;
         right: 20px;
+    }
+    
+    .vertical-buttons {
+        right: 100px;
+        bottom: 20px;
+    }
+    
+    .vertical-btn {
+        width: 50px;
+        height: 50px;
+        font-size: 16px;
     }
 }
