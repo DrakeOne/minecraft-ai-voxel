@@ -2,7 +2,7 @@
 export const config = {
     // World settings
     chunkSize: 16,
-    renderDistance: 4,
+    renderDistance: 4,  // This will be dynamically updatable
     blockSize: 1,
     
     // Physics
@@ -23,6 +23,16 @@ export const config = {
         useAdvancedLoader: false // DISABLED - Fix for rendering issue
     }
 };
+
+// NEW: Function to update render distance
+export function updateRenderDistance(newDistance) {
+    // Validate input
+    const distance = Math.max(1, Math.min(20, parseInt(newDistance)));
+    config.renderDistance = distance;
+    
+    console.log('[Config] Render distance updated to:', distance);
+    return distance;
+}
 
 // Block types
 export const BlockType = {
