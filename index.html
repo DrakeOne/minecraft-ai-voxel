@@ -28,6 +28,7 @@
         <div id="coords">X: 0 Y: 0 Z: 0</div>
         <div id="debug">Debug info</div>
         <div id="workerStatus">Workers: disabled</div>
+        <div id="flyStatus" style="display: none; color: #4CAF50;">FLYING</div>
     </div>
 
     <!-- Mobile Controls -->
@@ -39,6 +40,11 @@
             <button id="jumpBtn" class="action-btn">JUMP</button>
             <button id="breakBtn" class="action-btn">BREAK</button>
             <button id="placeBtn" class="action-btn">PLACE</button>
+            <button id="flyBtn" class="action-btn fly-btn">FLY</button>
+        </div>
+        <div class="vertical-buttons">
+            <button id="upBtn" class="vertical-btn">▲</button>
+            <button id="downBtn" class="vertical-btn">▼</button>
         </div>
     </div>
 
@@ -77,7 +83,20 @@
             if (window.gameStats && window.gameStats.workerStatus) {
                 workerStatus.textContent = `Workers: ${window.gameStats.workerStatus}`;
             }
-        }, 1000);
+            
+            // Update fly status
+            const flyStatus = document.getElementById('flyStatus');
+            const flyBtn = document.getElementById('flyBtn');
+            if (window.player && flyStatus) {
+                if (window.player.isFlying) {
+                    flyStatus.style.display = 'block';
+                    if (flyBtn) flyBtn.textContent = 'WALK';
+                } else {
+                    flyStatus.style.display = 'none';
+                    if (flyBtn) flyBtn.textContent = 'FLY';
+                }
+            }
+        }, 100);
         
         // Initialize checkbox state
         window.addEventListener('load', () => {
