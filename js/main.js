@@ -4,6 +4,7 @@ import { World } from './world/World.js';
 import { Player } from './player/Player.js';
 import { InputHandler } from './input/InputHandler.js';
 import { DebugOverlay } from './ui/DebugOverlay.js';
+import { WorkerManager } from './world/WorkerManager.js';  // Agregado para fix de workers
 
 console.log('[Main] Initializing game with config:', config);
 
