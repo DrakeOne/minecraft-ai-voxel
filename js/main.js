@@ -1,5 +1,5 @@
 // DEBUG: Agrega logs exhaustivos en el main loop
-import { config, stats } from './config.js';
+import { config, stats, updateRenderDistance } from './config.js';
 import { World } from './world/World.js';
 import { Player } from './player/Player.js';
 import { InputHandler } from './input/InputHandler.js';
@@ -90,6 +90,7 @@ const debugOverlay = new DebugOverlay(world, player);
 // Make stats and player globally accessible for UI
 window.gameStats = stats;
 window.player = player;
+window.config = config;
 
 // Listen for worker toggle events
 window.addEventListener('toggleWorkers', (e) => {
@@ -121,6 +122,28 @@ window.addEventListener('toggleWorkers', (e) => {
         stats.workerStatus = 'disabled';
         console.log('[Main] Workers disabled');
     }
+});
+
+// Listen for render distance update events
+window.addEventListener('updateRenderDistance', (e) => {
+    const newDistance = e.detail;
+    console.log('[Main] Updating render distance to:', newDistance);
+    
+    // Update config
+    const actualDistance = updateRenderDistance(newDistance);
+    
+    // Update fog distance based on new render distance
+    scene.fog.far = config.chunkSize * actualDistance * 1.5;
+    
+    // Update world render distance
+    if (world.updateRenderDistance) {
+        world.updateRenderDistance(actualDistance);
+    }
+    
+    // Force immediate chunk update
+    world.updateChunksAroundPlayer(player.position.x, player.position.z, camera, scene);
+    
+    console.log('[Main] Render distance updated successfully');
 });
 
 // Prevent iOS bounce and ensure proper sizing
