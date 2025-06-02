@@ -3,7 +3,7 @@ import { config, stats } from './config.js';
 import { World } from './world/World.js';
 import { Player } from './player/Player.js';
 import { InputHandler } from './input/InputHandler.js';
-import { WorkerManager } from './world/WorkerManager.js';
+import { DebugOverlay } from './ui/DebugOverlay.js';
 
 console.log('[Main] Initializing game with config:', config);
 
@@ -83,8 +83,12 @@ const player = new Player(world);
 console.log('[Main] Setting up input handler...');
 const inputHandler = new InputHandler(canvas, player, world, camera, scene);
 
-// Make stats globally accessible for UI
+// Initialize debug overlay
+const debugOverlay = new DebugOverlay(world, player);
+
+// Make stats and player globally accessible for UI
 window.gameStats = stats;
+window.player = player;
 
 // Listen for worker toggle events
 window.addEventListener('toggleWorkers', (e) => {
@@ -171,6 +175,9 @@ function animate() {
     console.log('[Main] Updating chunks around player...');
     world.updateChunksAroundPlayer(player.position.x, player.position.z, camera, scene);
 
+    // Update debug overlay
+    debugOverlay.update(stats.fps);
+
     // Update HUD
     document.getElementById('fps').textContent = `FPS: ${stats.fps}`;
     document.getElementById('coords').textContent = 
@@ -215,5 +222,8 @@ window.addEventListener('beforeunload', () => {
     console.log('[Main] Cleaning up...');
     if (world.dispose) {
         world.dispose();
+    }
+    if (debugOverlay) {
+        debugOverlay.dispose();
     }
 });
