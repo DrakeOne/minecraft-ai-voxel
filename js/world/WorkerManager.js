@@ -1,44 +1,178 @@
 // WorkerManager.js - Safe Web Workers implementation for GitHub Pages
 import { config } from '../config.js';
 
-// Terrain generation worker code as a string
-const TERRAIN_WORKER_CODE = `
-console.log('[TerrainWorker] Inline worker initialized');
-
-// Simple noise function
-function noise2D(x, y) {
-    const n = Math.sin(x * 12.9898 + y * 78.233) * 43758.5453;
-    return (n - Math.floor(n)) * 2 - 1;
+// Import DensityGenerator for the worker
+const DENSITY_GENERATOR_CODE = `
+class DensityGenerator {
+    constructor(seed = 12345) {
+        this.seed = seed;
+        this.baseOffset = 10;
+        this.terrainScale = 0.02;
+        this.caveScale = 0.05;
+        this.detailScale = 0.1;
+        this.biomeOffsets = {
+            plains: 0,
+            hills: 5,
+            mountains: 15,
+            ocean: -10
+        };
+    }
+    
+    random(x, y, z) {
+        const n = Math.sin(x * 12.9898 + y * 78.233 + z * 37.719 + this.seed) * 43758.5453;
+        return (n - Math.floor(n));
+    }
+    
+    noise3D(x, y, z, scale = 1) {
+        x *= scale;
+        y *= scale;
+        z *= scale;
+        
+        const xi = Math.floor(x);
+        const yi = Math.floor(y);
+        const zi = Math.floor(z);
+        
+        const xf = x - xi;
+        const yf = y - yi;
+        const zf = z - zi;
+        
+        const u = xf * xf * (3 - 2 * xf);
+        const v = yf * yf * (3 - 2 * yf);
+        const w = zf * zf * (3 - 2 * zf);
+        
+        const aaa = this.random(xi, yi, zi);
+        const aba = this.random(xi, yi + 1, zi);
+        const aab = this.random(xi, yi, zi + 1);
+        const abb = this.random(xi, yi + 1, zi + 1);
+        const baa = this.random(xi + 1, yi, zi);
+        const bba = this.random(xi + 1, yi + 1, zi);
+        const bab = this.random(xi + 1, yi, zi + 1);
+        const bbb = this.random(xi + 1, yi + 1, zi + 1);
+        
+        const x1 = aaa * (1 - u) + baa * u;
+        const x2 = aba * (1 - u) + bba * u;
+        const y1 = x1 * (1 - v) + x2 * v;
+        
+        const x3 = aab * (1 - u) + bab * u;
+        const x4 = abb * (1 - u) + bbb * u;
+        const y2 = x3 * (1 - v) + x4 * v;
+        
+        return (y1 * (1 - w) + y2 * w) * 2 - 1;
+    }
+    
+    getDensity(worldX, worldY, worldZ, biome = 'plains') {
+        const biomeOffset = this.biomeOffsets[biome] || 0;
+        let density = (this.baseOffset + biomeOffset) - worldY;
+        
+        density += this.noise3D(worldX, worldY, worldZ, this.terrainScale) * 15;
+        density += this.noise3D(worldX, worldY, worldZ, this.terrainScale * 2) * 8;
+        
+        const caveNoise = this.noise3D(worldX, worldY, worldZ, this.caveScale);
+        const caveNoise2 = this.noise3D(worldX, worldY, worldZ, this.caveScale * 2);
+        
+        if (caveNoise > 0.6 && caveNoise2 > 0.6) {
+            density -= 50;
+        }
+        
+        density += this.noise3D(worldX, worldY, worldZ, this.detailScale) * 3;
+        
+        if (worldY > 5 && worldY < 20) {
+            const overhangNoise = this.noise3D(worldX * 0.03, worldY * 0.1, worldZ * 0.03);
+            if (overhangNoise > 0.3) {
+                density += overhangNoise * 10;
+            }
+        }
+        
+        return density;
+    }
+    
+    getBiome(worldX, worldZ) {
+        const biomeNoise = this.noise3D(worldX * 0.005, 0, worldZ * 0.005);
+        
+        if (biomeNoise < -0.3) return 'ocean';
+        if (biomeNoise < 0) return 'plains';
+        if (biomeNoise < 0.3) return 'hills';
+        return 'mountains';
+    }
 }
+`;
+
+// Terrain generation worker code as a string
+const TERRAIN_WORKER_CODE = DENSITY_GENERATOR_CODE + `
+console.log('[TerrainWorker] 3D Density worker initialized');
 
 self.onmessage = function(e) {
     const { type, data } = e.data;
     
     if (type === 'GENERATE_CHUNK') {
         try {
-            const { chunkX, chunkZ, chunkSize } = data;
-            console.log('[TerrainWorker] Generating chunk at (' + chunkX + ', ' + chunkZ + ')');
+            const { chunkX, chunkZ, chunkSize, seed } = data;
+            console.log('[TerrainWorker] Generating 3D density chunk at (' + chunkX + ', ' + chunkZ + ')');
             
+            const generator = new DensityGenerator(seed);
             const blocks = new Uint8Array(chunkSize * chunkSize * chunkSize);
             
-            // Generate simple terrain
+            // First pass: Generate terrain using 3D density
             for (let x = 0; x < chunkSize; x++) {
-                for (let z = 0; z < chunkSize; z++) {
-                    const worldX = chunkX * chunkSize + x;
-                    const worldZ = chunkZ * chunkSize + z;
-                    
-                    // Simple height
-                    let height = 5 + Math.floor(noise2D(worldX * 0.05, worldZ * 0.05) * 3);
-                    height = Math.max(0, Math.min(height, chunkSize - 1));
-                    
-                    for (let y = 0; y <= height; y++) {
+                for (let y = 0; y < chunkSize; y++) {
+                    for (let z = 0; z < chunkSize; z++) {
+                        const worldX = chunkX * chunkSize + x;
+                        const worldY = y;
+                        const worldZ = chunkZ * chunkSize + z;
+                        
+                        const biome = generator.getBiome(worldX, worldZ);
+                        const density = generator.getDensity(worldX, worldY, worldZ, biome);
+                        
                         const index = x + y * chunkSize + z * chunkSize * chunkSize;
-                        if (y === height) {
-                            blocks[index] = 1; // Grass
-                        } else if (y > height - 3) {
-                            blocks[index] = 2; // Dirt  
+                        
+                        if (density > 0) {
+                            blocks[index] = 3; // Default to stone
                         } else {
-                            blocks[index] = 3; // Stone
+                            blocks[index] = 0; // Air
+                        }
+                    }
+                }
+            }
+            
+            // Second pass: Apply surface materials
+            for (let x = 0; x < chunkSize; x++) {
+                for (let y = 0; y < chunkSize; y++) {
+                    for (let z = 0; z < chunkSize; z++) {
+                        const index = x + y * chunkSize + z * chunkSize * chunkSize;
+                        
+                        if (blocks[index] !== 0) { // If solid
+                            const worldX = chunkX * chunkSize + x;
+                            const worldY = y;
+                            const worldZ = chunkZ * chunkSize + z;
+                            
+                            // Check if there's air above
+                            const aboveIndex = x + (y + 1) * chunkSize + z * chunkSize * chunkSize;
+                            const hasAirAbove = y === chunkSize - 1 || blocks[aboveIndex] === 0;
+                            
+                            if (hasAirAbove) {
+                                const biome = generator.getBiome(worldX, worldZ);
+                                
+                                // Surface block based on biome
+                                if (biome === 'ocean' && worldY < 5) {
+                                    blocks[index] = 2; // Dirt underwater
+                                } else if (biome === 'mountains' && worldY > 25) {
+                                    blocks[index] = 3; // Keep stone on mountains
+                                } else {
+                                    blocks[index] = 1; // Grass
+                                }
+                                
+                                // Add dirt layers below grass
+                                if (blocks[index] === 1) {
+                                    for (let dy = 1; dy <= 3; dy++) {
+                                        if (y - dy >= 0) {
+                                            const belowIndex = x + (y - dy) * chunkSize + z * chunkSize * chunkSize;
+                                            if (blocks[belowIndex] === 3) {
+                                                blocks[belowIndex] = 2; // Dirt
+                                            }
+                                        }
+                                    }
+                                }
+                            }
                         }
                     }
                 }
@@ -476,7 +610,8 @@ export class WorkerManager {
                 data: {
                     chunkX,
                     chunkZ,
-                    chunkSize: config.chunkSize
+                    chunkSize: config.chunkSize,
+                    seed: this.world.seed || 12345
                 }
             });
             
