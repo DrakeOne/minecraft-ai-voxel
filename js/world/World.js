@@ -102,6 +102,59 @@ export class World {
         return chunk.getBlock(localX, worldY, localZ);
     }
 
+    // NEW: Method to dynamically update render distance
+    updateRenderDistance(newDistance) {
+        console.log('[World] Updating render distance from', config.renderDistance, 'to', newDistance);
+        
+        const oldDistance = config.renderDistance;
+        config.renderDistance = newDistance;
+        
+        // If using advanced loader, update it
+        if (this.useAdvancedLoader && this.chunkLoader) {
+            // The ChunkLoader will handle the update in the next update cycle
+            console.log('[World] Advanced loader will update on next cycle');
+            return;
+        }
+        
+        // For basic system, we need to unload chunks outside new range
+        if (newDistance < oldDistance) {
+            console.log('[World] Unloading chunks outside new range...');
+            
+            // Get current player chunk position
+            const playerChunkX = Math.floor(window.player.position.x / config.chunkSize);
+            const playerChunkZ = Math.floor(window.player.position.z / config.chunkSize);
+            
+            // Create set of chunks that should remain loaded
+            const chunksToKeep = new Set();
+            for (let x = -newDistance; x <= newDistance; x++) {
+                for (let z = -newDistance; z <= newDistance; z++) {
+                    const cx = playerChunkX + x;
+                    const cz = playerChunkZ + z;
+                    chunksToKeep.add(this.getChunkKey(cx, cz));
+                }
+            }
+            
+            // Unload chunks outside new range
+            for (const key of this.loadedChunks) {
+                if (!chunksToKeep.has(key)) {
+                    const chunk = this.chunks.get(key);
+                    if (chunk && chunk.mesh) {
+                        this.scene.remove(chunk.mesh);
+                        chunk.mesh.geometry.dispose();
+                        chunk.mesh.material.dispose();
+                        chunk.mesh = null;
+                    }
+                    this.loadedChunks.delete(key);
+                }
+            }
+        }
+        
+        // Update stats
+        stats.totalChunks = (config.renderDistance * 2 + 1) * (config.renderDistance * 2 + 1);
+        
+        console.log('[World] Render distance update complete');
+    }
+
     updateChunksAroundPlayer(playerX, playerZ, camera, scene) {
         // NUEVO: Usar el sistema avanzado si está activado
         if (this.useAdvancedLoader && this.chunkLoader) {
