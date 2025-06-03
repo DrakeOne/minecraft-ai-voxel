@@ -445,6 +445,10 @@ export class WorkerManager {
         // Store terrain data for sub-chunks
         this.subChunkDataCache = new Map();
         
+        // Track sub-chunks being processed per column
+        this.columnSubChunkCount = new Map();
+        this.columnProcessedCount = new Map();
+        
         // Try to initialize workers
         this.tryInitialize();
     }
@@ -554,6 +558,10 @@ export class WorkerManager {
             // Get or create chunk column
             const chunkColumn = this.world.getChunkColumn(chunkX, chunkZ);
             
+            // Track how many sub-chunks we need to process
+            this.columnSubChunkCount.set(key, subChunks.length);
+            this.columnProcessedCount.set(key, 0);
+            
             // Process each sub-chunk
             subChunks.forEach(subChunkData => {
                 const { subY, blocks } = subChunkData;
@@ -569,7 +577,12 @@ export class WorkerManager {
                 this.requestSubChunkMesh(chunkX, chunkZ, subY, blocks);
             });
             
-            this.activeRequests.delete(key);
+            // If no sub-chunks (empty column), still update
+            if (subChunks.length === 0) {
+                chunkColumn.forceUpdateAllMeshes(this.scene);
+                this.activeRequests.delete(key);
+            }
+            
             this.processPending();
             
         } else if (type === 'ERROR') {
@@ -583,7 +596,8 @@ export class WorkerManager {
         
         if (type === 'SUBCHUNK_MESH_GENERATED') {
             const { chunkX, chunkZ, subY, vertices, normals, colors, indices, blocks } = data;
-            const key = `${chunkX},${chunkZ},${subY}`;
+            const key = `${chunkX},${chunkZ}`;
+            const subKey = `${chunkX},${chunkZ},${subY}`;
             
             this.workers.mesh[workerId].busy = false;
             
@@ -622,7 +636,23 @@ export class WorkerManager {
             }
             
             // Clean up cache
-            this.subChunkDataCache.delete(key);
+            this.subChunkDataCache.delete(subKey);
+            
+            // Track processed count
+            const processedCount = (this.columnProcessedCount.get(key) || 0) + 1;
+            this.columnProcessedCount.set(key, processedCount);
+            
+            // Check if all sub-chunks for this column are processed
+            const totalCount = this.columnSubChunkCount.get(key) || 0;
+            if (processedCount >= totalCount) {
+                // All sub-chunks processed, force update to ensure visibility
+                chunkColumn.forceUpdateAllMeshes(this.scene);
+                
+                // Clean up tracking
+                this.columnSubChunkCount.delete(key);
+                this.columnProcessedCount.delete(key);
+                this.activeRequests.delete(key);
+            }
             
         } else if (type === 'ERROR') {
             console.error(`[WorkerManager] Mesh worker ${workerId} error:`, error);
@@ -714,6 +744,8 @@ export class WorkerManager {
         this.pendingChunks.clear();
         this.activeRequests.clear();
         this.subChunkDataCache.clear();
+        this.columnSubChunkCount.clear();
+        this.columnProcessedCount.clear();
         this.enabled = false;
         
         console.log('[WorkerManager] Disposed');
