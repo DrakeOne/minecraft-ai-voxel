@@ -22,10 +22,19 @@ export const config = {
     // Features (safe defaults for GitHub Pages)
     features: {
         useWorkers: false,        // Disabled by default for safety
-        workerCount: 2,          // Conservative worker count
+        workerCount: 4,          // Increased worker count for better performance
         fallbackToSync: true,    // Always have fallback
         debugWorkers: true,      // Extra logging for workers
         useAdvancedLoader: false // DISABLED - Fix for rendering issue
+    },
+    
+    // Performance settings
+    performance: {
+        maxChunksPerFrame: 5,    // Maximum chunks to process per frame
+        predictiveDistance: 3,    // Chunks to predict ahead based on movement
+        chunkLoadDelay: 50,      // Milliseconds between chunk loads
+        priorityLoadRadius: 2,   // High priority loading radius
+        expandedViewFactor: 1.5  // Frustum expansion for predictive loading
     }
 };
 
@@ -35,7 +44,12 @@ export function updateRenderDistance(newDistance) {
     const distance = Math.max(1, Math.min(20, parseInt(newDistance)));
     config.renderDistance = distance;
     
+    // Adjust performance settings based on render distance
+    config.performance.maxChunksPerFrame = Math.max(3, Math.min(10, Math.floor(distance / 2)));
+    config.performance.predictiveDistance = Math.max(2, Math.min(5, Math.floor(distance / 3)));
+    
     console.log('[Config] Render distance updated to:', distance);
+    console.log('[Config] Performance settings adjusted:', config.performance);
     return distance;
 }
 
@@ -61,5 +75,7 @@ export const stats = {
     totalFaces: 0,
     visibleChunks: 0,
     totalChunks: 0,
-    workerStatus: 'disabled'
+    workerStatus: 'disabled',
+    chunksInQueue: 0,
+    chunksProcessing: 0
 };
