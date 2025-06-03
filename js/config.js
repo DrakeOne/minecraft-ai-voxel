@@ -5,6 +5,11 @@ export const config = {
     renderDistance: 4,  // This will be dynamically updatable
     blockSize: 1,
     
+    // Vertical chunk system
+    subChunkHeight: 16,    // Height of each sub-chunk
+    worldHeight: 256,      // Total world height
+    verticalChunks: 16,    // Number of vertical sub-chunks (256/16)
+    
     // Physics
     gravity: -20,
     jumpVelocity: 10,
