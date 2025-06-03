@@ -1,4 +1,4 @@
-// WorkerManager.js - Safe Web Workers implementation for GitHub Pages
+// WorkerManager.js - Safe Web Workers implementation for GitHub Pages with vertical chunks
 import { config } from '../config.js';
 
 // Import DensityGenerator for the worker
@@ -6,15 +6,15 @@ const DENSITY_GENERATOR_CODE = `
 class DensityGenerator {
     constructor(seed = 12345) {
         this.seed = seed;
-        this.baseOffset = 10;
+        this.baseOffset = 64; // Increased base height for taller terrain
         this.terrainScale = 0.02;
         this.caveScale = 0.05;
         this.detailScale = 0.1;
         this.biomeOffsets = {
             plains: 0,
-            hills: 5,
-            mountains: 15,
-            ocean: -10
+            hills: 20,
+            mountains: 40,
+            ocean: -20
         };
     }
     
@@ -64,8 +64,9 @@ class DensityGenerator {
         const biomeOffset = this.biomeOffsets[biome] || 0;
         let density = (this.baseOffset + biomeOffset) - worldY;
         
-        density += this.noise3D(worldX, worldY, worldZ, this.terrainScale) * 15;
-        density += this.noise3D(worldX, worldY, worldZ, this.terrainScale * 2) * 8;
+        // Increased amplitude for taller terrain
+        density += this.noise3D(worldX, worldY, worldZ, this.terrainScale) * 30;
+        density += this.noise3D(worldX, worldY, worldZ, this.terrainScale * 2) * 15;
         
         const caveNoise = this.noise3D(worldX, worldY, worldZ, this.caveScale);
         const caveNoise2 = this.noise3D(worldX, worldY, worldZ, this.caveScale * 2);
@@ -74,12 +75,13 @@ class DensityGenerator {
             density -= 50;
         }
         
-        density += this.noise3D(worldX, worldY, worldZ, this.detailScale) * 3;
+        density += this.noise3D(worldX, worldY, worldZ, this.detailScale) * 5;
         
-        if (worldY > 5 && worldY < 20) {
+        // More overhangs at various heights
+        if (worldY > 20 && worldY < 100) {
             const overhangNoise = this.noise3D(worldX * 0.03, worldY * 0.1, worldZ * 0.03);
             if (overhangNoise > 0.3) {
-                density += overhangNoise * 10;
+                density += overhangNoise * 15;
             }
         }
         
@@ -97,77 +99,101 @@ class DensityGenerator {
 }
 `;
 
-// Terrain generation worker code as a string
+// Terrain generation worker code with vertical chunks support
 const TERRAIN_WORKER_CODE = DENSITY_GENERATOR_CODE + `
-console.log('[TerrainWorker] 3D Density worker initialized');
+console.log('[TerrainWorker] 3D Density worker with vertical chunks initialized');
 
 self.onmessage = function(e) {
     const { type, data } = e.data;
     
-    if (type === 'GENERATE_CHUNK') {
+    if (type === 'GENERATE_CHUNK_COLUMN') {
         try {
-            const { chunkX, chunkZ, chunkSize, seed } = data;
-            console.log('[TerrainWorker] Generating 3D density chunk at (' + chunkX + ', ' + chunkZ + ')');
+            const { chunkX, chunkZ, chunkSize, subChunkHeight, verticalChunks, seed } = data;
+            console.log('[TerrainWorker] Generating chunk column at (' + chunkX + ', ' + chunkZ + ') with ' + verticalChunks + ' vertical chunks');
             
             const generator = new DensityGenerator(seed);
-            const blocks = new Uint8Array(chunkSize * chunkSize * chunkSize);
+            const results = [];
             
-            // First pass: Generate terrain using 3D density
-            for (let x = 0; x < chunkSize; x++) {
-                for (let y = 0; y < chunkSize; y++) {
-                    for (let z = 0; z < chunkSize; z++) {
-                        const worldX = chunkX * chunkSize + x;
-                        const worldY = y;
-                        const worldZ = chunkZ * chunkSize + z;
-                        
-                        const biome = generator.getBiome(worldX, worldZ);
-                        const density = generator.getDensity(worldX, worldY, worldZ, biome);
-                        
-                        const index = x + y * chunkSize + z * chunkSize * chunkSize;
-                        
-                        if (density > 0) {
-                            blocks[index] = 3; // Default to stone
-                        } else {
-                            blocks[index] = 0; // Air
+            // Generate each sub-chunk
+            for (let subY = 0; subY < verticalChunks; subY++) {
+                const baseY = subY * subChunkHeight;
+                const blocks = new Uint8Array(chunkSize * subChunkHeight * chunkSize);
+                let hasContent = false;
+                
+                // First pass: Generate terrain using 3D density
+                for (let x = 0; x < chunkSize; x++) {
+                    for (let y = 0; y < subChunkHeight; y++) {
+                        for (let z = 0; z < chunkSize; z++) {
+                            const worldX = chunkX * chunkSize + x;
+                            const worldY = baseY + y;
+                            const worldZ = chunkZ * chunkSize + z;
+                            
+                            const biome = generator.getBiome(worldX, worldZ);
+                            const density = generator.getDensity(worldX, worldY, worldZ, biome);
+                            
+                            const index = x + y * chunkSize + z * chunkSize * subChunkHeight;
+                            
+                            if (density > 0) {
+                                blocks[index] = 3; // Stone
+                                hasContent = true;
+                            } else {
+                                blocks[index] = 0; // Air
+                            }
                         }
                     }
                 }
-            }
-            
-            // Second pass: Apply surface materials
-            for (let x = 0; x < chunkSize; x++) {
-                for (let y = 0; y < chunkSize; y++) {
-                    for (let z = 0; z < chunkSize; z++) {
-                        const index = x + y * chunkSize + z * chunkSize * chunkSize;
-                        
-                        if (blocks[index] !== 0) { // If solid
-                            const worldX = chunkX * chunkSize + x;
-                            const worldY = y;
-                            const worldZ = chunkZ * chunkSize + z;
-                            
-                            // Check if there's air above
-                            const aboveIndex = x + (y + 1) * chunkSize + z * chunkSize * chunkSize;
-                            const hasAirAbove = y === chunkSize - 1 || blocks[aboveIndex] === 0;
-                            
-                            if (hasAirAbove) {
-                                const biome = generator.getBiome(worldX, worldZ);
+                
+                // Only process non-empty sub-chunks
+                if (hasContent) {
+                    // Second pass: Apply surface materials
+                    for (let x = 0; x < chunkSize; x++) {
+                        for (let y = 0; y < subChunkHeight; y++) {
+                            for (let z = 0; z < chunkSize; z++) {
+                                const index = x + y * chunkSize + z * chunkSize * subChunkHeight;
                                 
-                                // Surface block based on biome
-                                if (biome === 'ocean' && worldY < 5) {
-                                    blocks[index] = 2; // Dirt underwater
-                                } else if (biome === 'mountains' && worldY > 25) {
-                                    blocks[index] = 3; // Keep stone on mountains
-                                } else {
-                                    blocks[index] = 1; // Grass
-                                }
-                                
-                                // Add dirt layers below grass
-                                if (blocks[index] === 1) {
-                                    for (let dy = 1; dy <= 3; dy++) {
-                                        if (y - dy >= 0) {
-                                            const belowIndex = x + (y - dy) * chunkSize + z * chunkSize * chunkSize;
-                                            if (blocks[belowIndex] === 3) {
-                                                blocks[belowIndex] = 2; // Dirt
+                                if (blocks[index] !== 0) {
+                                    const worldX = chunkX * chunkSize + x;
+                                    const worldY = baseY + y;
+                                    const worldZ = chunkZ * chunkSize + z;
+                                    
+                                    // Check if there's air above
+                                    let hasAirAbove = false;
+                                    
+                                    if (y < subChunkHeight - 1) {
+                                        // Check within sub-chunk
+                                        const aboveIndex = x + (y + 1) * chunkSize + z * chunkSize * subChunkHeight;
+                                        hasAirAbove = blocks[aboveIndex] === 0;
+                                    } else if (subY < verticalChunks - 1) {
+                                        // Check next sub-chunk (simplified - assume air if at boundary)
+                                        const nextWorldY = worldY + 1;
+                                        const biome = generator.getBiome(worldX, worldZ);
+                                        const densityAbove = generator.getDensity(worldX, nextWorldY, worldZ, biome);
+                                        hasAirAbove = densityAbove <= 0;
+                                    } else {
+                                        // Top of world
+                                        hasAirAbove = true;
+                                    }
+                                    
+                                    if (hasAirAbove) {
+                                        const biome = generator.getBiome(worldX, worldZ);
+                                        
+                                        if (biome === 'ocean' && worldY < 40) {
+                                            blocks[index] = 2; // Dirt underwater
+                                        } else if (biome === 'mountains' && worldY > 100) {
+                                            blocks[index] = 3; // Keep stone on high mountains
+                                        } else {
+                                            blocks[index] = 1; // Grass
+                                        }
+                                        
+                                        // Add dirt layers below grass
+                                        if (blocks[index] === 1) {
+                                            for (let dy = 1; dy <= 3; dy++) {
+                                                if (y - dy >= 0) {
+                                                    const belowIndex = x + (y - dy) * chunkSize + z * chunkSize * subChunkHeight;
+                                                    if (blocks[belowIndex] === 3) {
+                                                        blocks[belowIndex] = 2; // Dirt
+                                                    }
+                                                }
                                             }
                                         }
                                     }
@@ -175,13 +201,22 @@ self.onmessage = function(e) {
                             }
                         }
                     }
+                    
+                    results.push({
+                        subY: subY,
+                        blocks: blocks.buffer
+                    });
                 }
             }
             
             self.postMessage({
-                type: 'CHUNK_GENERATED',
-                data: { chunkX, chunkZ, blocks: blocks.buffer }
-            }, [blocks.buffer]);
+                type: 'CHUNK_COLUMN_GENERATED',
+                data: { 
+                    chunkX, 
+                    chunkZ, 
+                    subChunks: results 
+                }
+            }, results.map(r => r.blocks));
             
         } catch (error) {
             self.postMessage({
@@ -193,9 +228,9 @@ self.onmessage = function(e) {
 };
 `;
 
-// Mesh generation worker code as a string
+// Mesh generation worker code with sub-chunk support
 const MESH_WORKER_CODE = `
-console.log('[MeshWorker] Inline worker initialized');
+console.log('[MeshWorker] Inline worker with sub-chunk support initialized');
 
 const BlockType = {
     AIR: 0,
@@ -219,15 +254,37 @@ const faces = [
     { dir: [0, 0, -1], name: 'back' }
 ];
 
-function getBlock(blocks, x, y, z, chunkSize) {
-    if (x < 0 || x >= chunkSize || y < 0 || y >= chunkSize || z < 0 || z >= chunkSize) {
+function getBlock(blocks, x, y, z, chunkSize, subChunkHeight) {
+    if (x < 0 || x >= chunkSize || y < 0 || y >= subChunkHeight || z < 0 || z >= chunkSize) {
         return 0;
     }
-    return blocks[x + y * chunkSize + z * chunkSize * chunkSize];
+    return blocks[x + y * chunkSize + z * chunkSize * subChunkHeight];
 }
 
-function shouldRenderFace(blocks, x, y, z, dir, chunkSize) {
-    return getBlock(blocks, x + dir[0], y + dir[1], z + dir[2], chunkSize) === 0;
+function shouldRenderFace(blocks, x, y, z, dir, chunkSize, subChunkHeight, neighborData) {
+    const checkX = x + dir[0];
+    const checkY = y + dir[1];
+    const checkZ = z + dir[2];
+    
+    // Check within sub-chunk
+    if (checkX >= 0 && checkX < chunkSize && 
+        checkY >= 0 && checkY < subChunkHeight && 
+        checkZ >= 0 && checkZ < chunkSize) {
+        return getBlock(blocks, checkX, checkY, checkZ, chunkSize, subChunkHeight) === 0;
+    }
+    
+    // Check neighbor sub-chunks
+    if (neighborData) {
+        if (checkY < 0 && neighborData.below) {
+            return getBlock(neighborData.below, checkX, subChunkHeight - 1, checkZ, chunkSize, subChunkHeight) === 0;
+        }
+        if (checkY >= subChunkHeight && neighborData.above) {
+            return getBlock(neighborData.above, checkX, 0, checkZ, chunkSize, subChunkHeight) === 0;
+        }
+    }
+    
+    // Default to rendering face at boundaries
+    return true;
 }
 
 function addFace(vertices, normals, colors, indices, x, y, z, face, color, vertexCount) {
@@ -235,7 +292,6 @@ function addFace(vertices, normals, colors, indices, x, y, z, face, color, verte
     let faceVertices = [];
     let normal = [0, 0, 0];
     
-    // Define vertices based on face
     switch(face.name) {
         case 'top':
             faceVertices = [
@@ -309,9 +365,9 @@ function addFace(vertices, normals, colors, indices, x, y, z, face, color, verte
 self.onmessage = function(e) {
     const { type, data } = e.data;
     
-    if (type === 'GENERATE_MESH') {
+    if (type === 'GENERATE_SUBCHUNK_MESH') {
         try {
-            const { blocks, chunkSize, chunkX, chunkZ } = data;
+            const { blocks, chunkSize, subChunkHeight, chunkX, chunkZ, subY, neighborData } = data;
             const blockArray = new Uint8Array(blocks);
             
             const vertices = [];
@@ -320,20 +376,22 @@ self.onmessage = function(e) {
             const indices = [];
             let vertexCount = 0;
             
+            const baseY = subY * subChunkHeight;
+            
             for (let x = 0; x < chunkSize; x++) {
-                for (let y = 0; y < chunkSize; y++) {
+                for (let y = 0; y < subChunkHeight; y++) {
                     for (let z = 0; z < chunkSize; z++) {
-                        const block = getBlock(blockArray, x, y, z, chunkSize);
+                        const block = getBlock(blockArray, x, y, z, chunkSize, subChunkHeight);
                         if (block === 0) continue;
                         
                         const worldX = chunkX * chunkSize + x;
-                        const worldY = y;
+                        const worldY = baseY + y;
                         const worldZ = chunkZ * chunkSize + z;
                         
                         const color = blockColors[block];
                         
                         faces.forEach(face => {
-                            if (shouldRenderFace(blockArray, x, y, z, face.dir, chunkSize)) {
+                            if (shouldRenderFace(blockArray, x, y, z, face.dir, chunkSize, subChunkHeight, neighborData)) {
                                 addFace(vertices, normals, colors, indices, worldX, worldY, worldZ, face, color, vertexCount);
                                 vertexCount += 4;
                             }
@@ -342,17 +400,17 @@ self.onmessage = function(e) {
                 }
             }
             
-            // IMPORTANT: Return both mesh data AND the original blocks for physics
             self.postMessage({
-                type: 'MESH_GENERATED',
+                type: 'SUBCHUNK_MESH_GENERATED',
                 data: {
                     chunkX,
                     chunkZ,
+                    subY,
                     vertices: new Float32Array(vertices).buffer,
                     normals: new Float32Array(normals).buffer,
                     colors: new Float32Array(colors).buffer,
                     indices: new Uint32Array(indices).buffer,
-                    blocks: blockArray.buffer // Return blocks for physics!
+                    blocks: blockArray.buffer
                 }
             }, [
                 new Float32Array(vertices).buffer,
@@ -384,8 +442,8 @@ export class WorkerManager {
         this.pendingChunks = new Map();
         this.activeRequests = new Set();
         
-        // Store terrain data temporarily
-        this.terrainDataCache = new Map();
+        // Store terrain data for sub-chunks
+        this.subChunkDataCache = new Map();
         
         // Try to initialize workers
         this.tryInitialize();
@@ -393,13 +451,11 @@ export class WorkerManager {
     
     tryInitialize() {
         try {
-            // Test if workers are supported
             if (typeof Worker === 'undefined') {
                 console.warn('[WorkerManager] Web Workers not supported');
                 return false;
             }
             
-            // Test if we can create blob workers
             const testBlob = new Blob(['self.postMessage("test")'], { type: 'application/javascript' });
             const testUrl = URL.createObjectURL(testBlob);
             const testWorker = new Worker(testUrl);
@@ -419,7 +475,6 @@ export class WorkerManager {
                 URL.revokeObjectURL(testUrl);
             };
             
-            // Timeout fallback
             setTimeout(() => {
                 if (!this.enabled) {
                     console.warn('[WorkerManager] Worker test timeout');
@@ -438,7 +493,7 @@ export class WorkerManager {
     
     initialize() {
         try {
-            const workerCount = Math.min(navigator.hardwareConcurrency || 2, 2); // Max 2 workers each
+            const workerCount = Math.min(navigator.hardwareConcurrency || 2, 2);
             
             // Create terrain workers
             for (let i = 0; i < workerCount; i++) {
@@ -479,7 +534,7 @@ export class WorkerManager {
             }
             
             this.enabled = true;
-            console.log(`[WorkerManager] Initialized with ${workerCount} workers each`);
+            console.log(`[WorkerManager] Initialized with ${workerCount} workers each for vertical chunks`);
             
         } catch (error) {
             console.error('[WorkerManager] Failed to initialize:', error);
@@ -490,59 +545,53 @@ export class WorkerManager {
     handleTerrainMessage(e, workerId) {
         const { type, data, error } = e.data;
         
-        if (type === 'CHUNK_GENERATED') {
-            const { chunkX, chunkZ, blocks } = data;
+        if (type === 'CHUNK_COLUMN_GENERATED') {
+            const { chunkX, chunkZ, subChunks } = data;
             const key = `${chunkX},${chunkZ}`;
             
-            // Mark worker as available
             this.workers.terrain[workerId].busy = false;
             
-            // Store terrain data for later
-            this.terrainDataCache.set(key, new Uint8Array(blocks));
+            // Get or create chunk column
+            const chunkColumn = this.world.getChunkColumn(chunkX, chunkZ);
             
-            // Generate mesh
-            this.requestMesh(chunkX, chunkZ, blocks);
+            // Process each sub-chunk
+            subChunks.forEach(subChunkData => {
+                const { subY, blocks } = subChunkData;
+                
+                // Store blocks in chunk column
+                chunkColumn.setSubChunkBlocks(subY, new Uint8Array(blocks));
+                
+                // Cache for mesh generation
+                const subKey = `${chunkX},${chunkZ},${subY}`;
+                this.subChunkDataCache.set(subKey, new Uint8Array(blocks));
+                
+                // Request mesh generation
+                this.requestSubChunkMesh(chunkX, chunkZ, subY, blocks);
+            });
+            
+            this.activeRequests.delete(key);
+            this.processPending();
             
         } else if (type === 'ERROR') {
             console.error(`[WorkerManager] Terrain worker ${workerId} error:`, error);
             this.workers.terrain[workerId].busy = false;
-            
-            // Fallback to sync generation
-            const key = Array.from(this.activeRequests).find(k => !this.workers.terrain.some(w => w.busy));
-            if (key) {
-                this.activeRequests.delete(key);
-                const [x, z] = key.split(',').map(Number);
-                const chunk = this.world.getChunk(x, z);
-                chunk.generateTerrain();
-                chunk.updateMesh(this.scene);
-            }
         }
     }
     
     handleMeshMessage(e, workerId) {
         const { type, data, error } = e.data;
         
-        if (type === 'MESH_GENERATED') {
-            const { chunkX, chunkZ, vertices, normals, colors, indices, blocks } = data;
-            const key = `${chunkX},${chunkZ}`;
+        if (type === 'SUBCHUNK_MESH_GENERATED') {
+            const { chunkX, chunkZ, subY, vertices, normals, colors, indices, blocks } = data;
+            const key = `${chunkX},${chunkZ},${subY}`;
             
-            // Mark worker as available
             this.workers.mesh[workerId].busy = false;
-            this.activeRequests.delete(key);
             
-            // Get the chunk
-            const chunk = this.world.getChunk(chunkX, chunkZ);
+            // Get chunk column
+            const chunkColumn = this.world.getChunkColumn(chunkX, chunkZ);
+            if (!chunkColumn) return;
             
-            // CRITICAL FIX: Set the blocks data for physics!
-            if (blocks) {
-                chunk.blocks = new Uint8Array(blocks);
-            } else if (this.terrainDataCache.has(key)) {
-                // Fallback: use cached terrain data
-                chunk.blocks = this.terrainDataCache.get(key);
-                this.terrainDataCache.delete(key);
-            }
-            
-            // Create mesh only if we have vertices
+            // Create mesh if we have vertices
             if (vertices.byteLength > 0) {
                 const geometry = new THREE.BufferGeometry();
                 geometry.setAttribute('position', new THREE.Float32BufferAttribute(new Float32Array(vertices), 3));
@@ -552,41 +601,32 @@ export class WorkerManager {
                 geometry.computeBoundingBox();
                 geometry.computeBoundingSphere();
                 
-                // Remove old mesh
-                if (chunk.mesh) {
-                    this.scene.remove(chunk.mesh);
-                    chunk.mesh.geometry.dispose();
-                    chunk.mesh.material.dispose();
-                }
-                
-                // Create new mesh
                 const material = new THREE.MeshLambertMaterial({ 
                     vertexColors: true,
                     side: THREE.FrontSide
                 });
                 
-                chunk.mesh = new THREE.Mesh(geometry, material);
-                this.scene.add(chunk.mesh);
+                const mesh = new THREE.Mesh(geometry, material);
                 
-                // Mark chunk as no longer needing update
-                chunk.needsUpdate = false;
+                // Update sub-chunk mesh
+                const subChunk = chunkColumn.subChunks.get(subY);
+                if (subChunk) {
+                    if (subChunk.mesh) {
+                        this.scene.remove(subChunk.mesh);
+                        subChunk.mesh.geometry.dispose();
+                        subChunk.mesh.material.dispose();
+                    }
+                    subChunk.mesh = mesh;
+                    this.scene.add(mesh);
+                }
             }
             
-            // Process pending chunks
-            this.processPending();
+            // Clean up cache
+            this.subChunkDataCache.delete(key);
             
         } else if (type === 'ERROR') {
             console.error(`[WorkerManager] Mesh worker ${workerId} error:`, error);
             this.workers.mesh[workerId].busy = false;
-            
-            // Fallback to sync generation
-            const key = Array.from(this.activeRequests).find(k => !this.workers.mesh.some(w => w.busy));
-            if (key) {
-                this.activeRequests.delete(key);
-                const [x, z] = key.split(',').map(Number);
-                const chunk = this.world.getChunk(x, z);
-                chunk.updateMesh(this.scene);
-            }
         }
     }
     
@@ -595,10 +635,8 @@ export class WorkerManager {
         
         const key = `${chunkX},${chunkZ}`;
         
-        // Check if already processing
         if (this.activeRequests.has(key)) return true;
         
-        // Find available terrain worker
         const worker = this.workers.terrain.find(w => !w.busy);
         
         if (worker) {
@@ -606,43 +644,45 @@ export class WorkerManager {
             this.activeRequests.add(key);
             
             worker.worker.postMessage({
-                type: 'GENERATE_CHUNK',
+                type: 'GENERATE_CHUNK_COLUMN',
                 data: {
                     chunkX,
                     chunkZ,
                     chunkSize: config.chunkSize,
+                    subChunkHeight: config.subChunkHeight,
+                    verticalChunks: config.verticalChunks,
                     seed: this.world.seed || 12345
                 }
             });
             
             return true;
         } else {
-            // Add to pending
             this.pendingChunks.set(key, { x: chunkX, z: chunkZ });
             return true;
         }
     }
     
-    requestMesh(chunkX, chunkZ, blocks) {
+    requestSubChunkMesh(chunkX, chunkZ, subY, blocks) {
         const worker = this.workers.mesh.find(w => !w.busy);
         
         if (worker) {
             worker.busy = true;
             
+            // Get neighbor sub-chunk data for proper face culling
+            const neighborData = {};
+            
             worker.worker.postMessage({
-                type: 'GENERATE_MESH',
+                type: 'GENERATE_SUBCHUNK_MESH',
                 data: {
                     blocks,
                     chunkSize: config.chunkSize,
+                    subChunkHeight: config.subChunkHeight,
                     chunkX,
-                    chunkZ
+                    chunkZ,
+                    subY,
+                    neighborData
                 }
             }, [blocks]);
-        } else {
-            // Fallback to sync
-            const chunk = this.world.getChunk(chunkX, chunkZ);
-            chunk.updateMesh(this.scene);
-            this.activeRequests.delete(`${chunkX},${chunkZ}`);
         }
     }
     
@@ -662,7 +702,6 @@ export class WorkerManager {
     }
     
     dispose() {
-        // Terminate all workers
         [...this.workers.terrain, ...this.workers.mesh].forEach(w => {
             try {
                 w.worker.terminate();
@@ -674,7 +713,7 @@ export class WorkerManager {
         this.workers.mesh = [];
         this.pendingChunks.clear();
         this.activeRequests.clear();
-        this.terrainDataCache.clear();
+        this.subChunkDataCache.clear();
         this.enabled = false;
         
         console.log('[WorkerManager] Disposed');
