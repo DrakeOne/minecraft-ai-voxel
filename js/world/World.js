@@ -1,5 +1,6 @@
 import { config, stats } from '../config.js';
 import { Chunk } from './Chunk.js';
+import { ChunkColumn } from './ChunkColumn.js';
 import { ChunkLoader } from './ChunkLoader.js';
 import { WorkerManager } from './WorkerManager.js';
 
@@ -25,7 +26,7 @@ class FrustumCuller {
         );
         const max = new THREE.Vector3(
             (chunkX + 1) * config.chunkSize + 0.5,
-            config.chunkSize + 0.5,
+            config.worldHeight + 0.5,  // Updated to use world height
             (chunkZ + 1) * config.chunkSize + 0.5
         );
         
@@ -39,6 +40,7 @@ export class World {
     constructor(scene) {
         this.scene = scene;
         this.chunks = new Map();
+        this.chunkColumns = new Map(); // NEW: Store chunk columns for vertical chunks
         this.loadedChunks = new Set();
         this.frustumCuller = new FrustumCuller();
         
@@ -88,6 +90,15 @@ export class World {
         }
         return this.chunks.get(key);
     }
+    
+    // NEW: Get chunk column for vertical chunks system
+    getChunkColumn(x, z) {
+        const key = this.getChunkKey(x, z);
+        if (!this.chunkColumns.has(key)) {
+            this.chunkColumns.set(key, new ChunkColumn(x, z, this));
+        }
+        return this.chunkColumns.get(key);
+    }
 
     // Get block from world coordinates (handles cross-chunk queries)
     getBlockAtWorldCoords(worldX, worldY, worldZ) {
@@ -96,8 +107,13 @@ export class World {
         const localX = ((worldX % config.chunkSize) + config.chunkSize) % config.chunkSize;
         const localZ = ((worldZ % config.chunkSize) + config.chunkSize) % config.chunkSize;
         
-        // FIX: Simplemente usar el sistema de chunks normal
-        // No intentar usar ChunkLoader.getChunkAt que no existe
+        // Use chunk columns if workers are enabled
+        if (this.workerManager && this.workerManager.isEnabled() && config.features.useWorkers) {
+            const chunkColumn = this.getChunkColumn(chunkX, chunkZ);
+            return chunkColumn.getBlock(localX, worldY, localZ);
+        }
+        
+        // Fallback to regular chunks
         const chunk = this.getChunk(chunkX, chunkZ);
         return chunk.getBlock(localX, worldY, localZ);
     }
@@ -137,12 +153,22 @@ export class World {
             // Unload chunks outside new range
             for (const key of this.loadedChunks) {
                 if (!chunksToKeep.has(key)) {
-                    const chunk = this.chunks.get(key);
-                    if (chunk && chunk.mesh) {
-                        this.scene.remove(chunk.mesh);
-                        chunk.mesh.geometry.dispose();
-                        chunk.mesh.material.dispose();
-                        chunk.mesh = null;
+                    // Unload chunk columns if using workers
+                    if (this.workerManager && this.workerManager.isEnabled() && config.features.useWorkers) {
+                        const chunkColumn = this.chunkColumns.get(key);
+                        if (chunkColumn) {
+                            chunkColumn.dispose(this.scene);
+                            this.chunkColumns.delete(key);
+                        }
+                    } else {
+                        // Unload regular chunks
+                        const chunk = this.chunks.get(key);
+                        if (chunk && chunk.mesh) {
+                            this.scene.remove(chunk.mesh);
+                            chunk.mesh.geometry.dispose();
+                            chunk.mesh.material.dispose();
+                            chunk.mesh = null;
+                        }
                     }
                     this.loadedChunks.delete(key);
                 }
@@ -184,18 +210,39 @@ export class World {
                 newLoadedChunks.add(key);
                 
                 if (!this.loadedChunks.has(key)) {
-                    const chunk = this.getChunk(cx, cz);
-                    
-                    // NUEVO: Intentar usar workers si están disponibles
+                    // Use chunk columns if workers are enabled
                     if (this.workerManager && this.workerManager.isEnabled() && config.features.useWorkers) {
-                        // Request async generation
+                        // Request async generation for chunk column
                         const requested = this.workerManager.requestChunk(cx, cz);
                         if (!requested && config.features.fallbackToSync) {
-                            // Fallback to sync if worker request failed
-                            chunk.updateMesh(scene);
+                            // Fallback to sync generation
+                            const chunkColumn = this.getChunkColumn(cx, cz);
+                            // Generate simple terrain for all sub-chunks
+                            for (let subY = 0; subY < config.verticalChunks; subY++) {
+                                const baseY = subY * config.subChunkHeight;
+                                const subChunk = chunkColumn.getOrCreateSubChunk(subY);
+                                
+                                // Simple terrain generation for fallback
+                                if (baseY < 64) {
+                                    for (let x = 0; x < config.chunkSize; x++) {
+                                        for (let z = 0; z < config.chunkSize; z++) {
+                                            for (let y = 0; y < config.subChunkHeight; y++) {
+                                                const worldY = baseY + y;
+                                                if (worldY < 60) {
+                                                    chunkColumn.setBlock(x, worldY, z, 3); // Stone
+                                                } else if (worldY === 60) {
+                                                    chunkColumn.setBlock(x, worldY, z, 1); // Grass
+                                                }
+                                            }
+                                        }
+                                    }
+                                }
+                            }
+                            chunkColumn.updateAllDirtyMeshes(scene);
                         }
                     } else {
-                        // Sync generation
+                        // Regular chunk generation
+                        const chunk = this.getChunk(cx, cz);
                         chunk.updateMesh(scene);
                     }
                 }
@@ -205,12 +252,21 @@ export class World {
         // Unload chunks outside render distance or not visible
         for (const key of this.loadedChunks) {
             if (!newLoadedChunks.has(key)) {
-                const chunk = this.chunks.get(key);
-                if (chunk && chunk.mesh) {
-                    scene.remove(chunk.mesh);
-                    chunk.mesh.geometry.dispose();
-                    chunk.mesh.material.dispose();
-                    chunk.mesh = null;
+                // Unload chunk columns if using workers
+                if (this.workerManager && this.workerManager.isEnabled() && config.features.useWorkers) {
+                    const chunkColumn = this.chunkColumns.get(key);
+                    if (chunkColumn) {
+                        chunkColumn.dispose(this.scene);
+                    }
+                } else {
+                    // Unload regular chunks
+                    const chunk = this.chunks.get(key);
+                    if (chunk && chunk.mesh) {
+                        scene.remove(chunk.mesh);
+                        chunk.mesh.geometry.dispose();
+                        chunk.mesh.material.dispose();
+                        chunk.mesh = null;
+                    }
                 }
             }
         }
@@ -236,31 +292,45 @@ export class World {
         const localX = ((worldX % config.chunkSize) + config.chunkSize) % config.chunkSize;
         const localZ = ((worldZ % config.chunkSize) + config.chunkSize) % config.chunkSize;
         
-        const chunk = this.getChunk(chunkX, chunkZ);
-        chunk.setBlock(localX, worldY, localZ, type);
-        chunk.updateMesh(scene);
-        
-        // Update all potentially affected adjacent chunks
-        const chunksToUpdate = new Set();
-        
-        // Check if block is on chunk boundary and update neighbors
-        if (localX === 0) chunksToUpdate.add(this.getChunk(chunkX - 1, chunkZ));
-        if (localX === config.chunkSize - 1) chunksToUpdate.add(this.getChunk(chunkX + 1, chunkZ));
-        if (localZ === 0) chunksToUpdate.add(this.getChunk(chunkX, chunkZ - 1));
-        if (localZ === config.chunkSize - 1) chunksToUpdate.add(this.getChunk(chunkX, chunkZ + 1));
-        
-        // Corner cases
-        if (localX === 0 && localZ === 0) chunksToUpdate.add(this.getChunk(chunkX - 1, chunkZ - 1));
-        if (localX === 0 && localZ === config.chunkSize - 1) chunksToUpdate.add(this.getChunk(chunkX - 1, chunkZ + 1));
-        if (localX === config.chunkSize - 1 && localZ === 0) chunksToUpdate.add(this.getChunk(chunkX + 1, chunkZ - 1));
-        if (localX === config.chunkSize - 1 && localZ === config.chunkSize - 1) chunksToUpdate.add(this.getChunk(chunkX + 1, chunkZ + 1));
-        
-        // Update all affected chunks
-        chunksToUpdate.forEach(chunk => {
-            if (chunk && this.loadedChunks.has(this.getChunkKey(chunk.x, chunk.z))) {
-                chunk.updateMesh(scene);
-            }
-        });
+        // Use chunk columns if workers are enabled
+        if (this.workerManager && this.workerManager.isEnabled() && config.features.useWorkers) {
+            const chunkColumn = this.getChunkColumn(chunkX, chunkZ);
+            chunkColumn.setBlock(localX, worldY, localZ, type);
+            chunkColumn.updateAllDirtyMeshes(scene);
+            
+            // Update neighboring chunk columns if on boundary
+            const columnsToUpdate = new Set();
+            
+            if (localX === 0) columnsToUpdate.add(this.getChunkColumn(chunkX - 1, chunkZ));
+            if (localX === config.chunkSize - 1) columnsToUpdate.add(this.getChunkColumn(chunkX + 1, chunkZ));
+            if (localZ === 0) columnsToUpdate.add(this.getChunkColumn(chunkX, chunkZ - 1));
+            if (localZ === config.chunkSize - 1) columnsToUpdate.add(this.getChunkColumn(chunkX, chunkZ + 1));
+            
+            columnsToUpdate.forEach(column => {
+                if (column && this.loadedChunks.has(this.getChunkKey(column.x, column.z))) {
+                    column.updateAllDirtyMeshes(scene);
+                }
+            });
+        } else {
+            // Regular chunk system
+            const chunk = this.getChunk(chunkX, chunkZ);
+            chunk.setBlock(localX, worldY, localZ, type);
+            chunk.updateMesh(scene);
+            
+            // Update all potentially affected adjacent chunks
+            const chunksToUpdate = new Set();
+            
+            if (localX === 0) chunksToUpdate.add(this.getChunk(chunkX - 1, chunkZ));
+            if (localX === config.chunkSize - 1) chunksToUpdate.add(this.getChunk(chunkX + 1, chunkZ));
+            if (localZ === 0) chunksToUpdate.add(this.getChunk(chunkX, chunkZ - 1));
+            if (localZ === config.chunkSize - 1) chunksToUpdate.add(this.getChunk(chunkX, chunkZ + 1));
+            
+            chunksToUpdate.forEach(chunk => {
+                if (chunk && this.loadedChunks.has(this.getChunkKey(chunk.x, chunk.z))) {
+                    chunk.updateMesh(scene);
+                }
+            });
+        }
     }
     
     // NUEVO: Obtener estadísticas del sistema
@@ -268,6 +338,7 @@ export class World {
         const baseStats = {
             chunksLoaded: this.loadedChunks.size,
             totalChunks: this.chunks.size,
+            totalChunkColumns: this.chunkColumns.size,
             workerEnabled: this.workerManager ? this.workerManager.isEnabled() : false
         };
         
@@ -296,6 +367,11 @@ export class World {
             this.chunkLoader.dispose();
         }
         
+        // Limpiar chunk columns
+        for (const chunkColumn of this.chunkColumns.values()) {
+            chunkColumn.dispose(this.scene);
+        }
+        
         // Limpiar chunks existentes
         for (const chunk of this.chunks.values()) {
             if (chunk.mesh) {
@@ -306,6 +382,7 @@ export class World {
         }
         
         this.chunks.clear();
+        this.chunkColumns.clear();
         this.loadedChunks.clear();
     }
 }
