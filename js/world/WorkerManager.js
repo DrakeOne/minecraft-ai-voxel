@@ -445,10 +445,6 @@ export class WorkerManager {
         // Store terrain data for sub-chunks
         this.subChunkDataCache = new Map();
         
-        // Track sub-chunks being processed per column
-        this.columnSubChunkCount = new Map();
-        this.columnProcessedCount = new Map();
-        
         // Try to initialize workers
         this.tryInitialize();
     }
@@ -558,9 +554,7 @@ export class WorkerManager {
             // Get or create chunk column
             const chunkColumn = this.world.getChunkColumn(chunkX, chunkZ);
             
-            // Track how many sub-chunks we need to process
-            this.columnSubChunkCount.set(key, subChunks.length);
-            this.columnProcessedCount.set(key, 0);
+            console.log(`[WorkerManager] Generated ${subChunks.length} sub-chunks for column ${key}`);
             
             // Process each sub-chunk
             subChunks.forEach(subChunkData => {
@@ -569,20 +563,12 @@ export class WorkerManager {
                 // Store blocks in chunk column
                 chunkColumn.setSubChunkBlocks(subY, new Uint8Array(blocks));
                 
-                // Cache for mesh generation
-                const subKey = `${chunkX},${chunkZ},${subY}`;
-                this.subChunkDataCache.set(subKey, new Uint8Array(blocks));
-                
-                // Request mesh generation
-                this.requestSubChunkMesh(chunkX, chunkZ, subY, blocks);
+                // Immediately update the mesh for this sub-chunk
+                chunkColumn.updateSubChunkMesh(subY, this.scene);
             });
             
-            // If no sub-chunks (empty column), still update
-            if (subChunks.length === 0) {
-                chunkColumn.forceUpdateAllMeshes(this.scene);
-                this.activeRequests.delete(key);
-            }
-            
+            // Mark as complete
+            this.activeRequests.delete(key);
             this.processPending();
             
         } else if (type === 'ERROR') {
@@ -592,72 +578,8 @@ export class WorkerManager {
     }
     
     handleMeshMessage(e, workerId) {
-        const { type, data, error } = e.data;
-        
-        if (type === 'SUBCHUNK_MESH_GENERATED') {
-            const { chunkX, chunkZ, subY, vertices, normals, colors, indices, blocks } = data;
-            const key = `${chunkX},${chunkZ}`;
-            const subKey = `${chunkX},${chunkZ},${subY}`;
-            
-            this.workers.mesh[workerId].busy = false;
-            
-            // Get chunk column
-            const chunkColumn = this.world.getChunkColumn(chunkX, chunkZ);
-            if (!chunkColumn) return;
-            
-            // Create mesh if we have vertices
-            if (vertices.byteLength > 0) {
-                const geometry = new THREE.BufferGeometry();
-                geometry.setAttribute('position', new THREE.Float32BufferAttribute(new Float32Array(vertices), 3));
-                geometry.setAttribute('normal', new THREE.Float32BufferAttribute(new Float32Array(normals), 3));
-                geometry.setAttribute('color', new THREE.Float32BufferAttribute(new Float32Array(colors), 3));
-                geometry.setIndex(new THREE.Uint32BufferAttribute(new Uint32Array(indices), 1));
-                geometry.computeBoundingBox();
-                geometry.computeBoundingSphere();
-                
-                const material = new THREE.MeshLambertMaterial({ 
-                    vertexColors: true,
-                    side: THREE.FrontSide
-                });
-                
-                const mesh = new THREE.Mesh(geometry, material);
-                
-                // Update sub-chunk mesh
-                const subChunk = chunkColumn.subChunks.get(subY);
-                if (subChunk) {
-                    if (subChunk.mesh) {
-                        this.scene.remove(subChunk.mesh);
-                        subChunk.mesh.geometry.dispose();
-                        subChunk.mesh.material.dispose();
-                    }
-                    subChunk.mesh = mesh;
-                    this.scene.add(mesh);
-                }
-            }
-            
-            // Clean up cache
-            this.subChunkDataCache.delete(subKey);
-            
-            // Track processed count
-            const processedCount = (this.columnProcessedCount.get(key) || 0) + 1;
-            this.columnProcessedCount.set(key, processedCount);
-            
-            // Check if all sub-chunks for this column are processed
-            const totalCount = this.columnSubChunkCount.get(key) || 0;
-            if (processedCount >= totalCount) {
-                // All sub-chunks processed, force update to ensure visibility
-                chunkColumn.forceUpdateAllMeshes(this.scene);
-                
-                // Clean up tracking
-                this.columnSubChunkCount.delete(key);
-                this.columnProcessedCount.delete(key);
-                this.activeRequests.delete(key);
-            }
-            
-        } else if (type === 'ERROR') {
-            console.error(`[WorkerManager] Mesh worker ${workerId} error:`, error);
-            this.workers.mesh[workerId].busy = false;
-        }
+        // This is now unused since we're generating meshes directly in the main thread
+        this.workers.mesh[workerId].busy = false;
     }
     
     requestChunk(chunkX, chunkZ) {
@@ -672,6 +594,8 @@ export class WorkerManager {
         if (worker) {
             worker.busy = true;
             this.activeRequests.add(key);
+            
+            console.log(`[WorkerManager] Requesting chunk column at ${key}`);
             
             worker.worker.postMessage({
                 type: 'GENERATE_CHUNK_COLUMN',
@@ -689,30 +613,6 @@ export class WorkerManager {
         } else {
             this.pendingChunks.set(key, { x: chunkX, z: chunkZ });
             return true;
-        }
-    }
-    
-    requestSubChunkMesh(chunkX, chunkZ, subY, blocks) {
-        const worker = this.workers.mesh.find(w => !w.busy);
-        
-        if (worker) {
-            worker.busy = true;
-            
-            // Get neighbor sub-chunk data for proper face culling
-            const neighborData = {};
-            
-            worker.worker.postMessage({
-                type: 'GENERATE_SUBCHUNK_MESH',
-                data: {
-                    blocks,
-                    chunkSize: config.chunkSize,
-                    subChunkHeight: config.subChunkHeight,
-                    chunkX,
-                    chunkZ,
-                    subY,
-                    neighborData
-                }
-            }, [blocks]);
         }
     }
     
@@ -744,8 +644,6 @@ export class WorkerManager {
         this.pendingChunks.clear();
         this.activeRequests.clear();
         this.subChunkDataCache.clear();
-        this.columnSubChunkCount.clear();
-        this.columnProcessedCount.clear();
         this.enabled = false;
         
         console.log('[WorkerManager] Disposed');
