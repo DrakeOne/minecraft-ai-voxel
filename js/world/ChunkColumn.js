@@ -15,6 +15,9 @@ export class ChunkColumn {
         
         // Track which sub-chunks need mesh updates
         this.dirtySubChunks = new Set();
+        
+        // Track if initial generation is complete
+        this.isGenerated = false;
     }
     
     // Get a sub-chunk, creating it if necessary
@@ -239,6 +242,17 @@ export class ChunkColumn {
             this.updateSubChunkMesh(subY, scene);
         }
         this.dirtySubChunks.clear();
+    }
+    
+    // Force update all sub-chunks (used after initial generation)
+    forceUpdateAllMeshes(scene) {
+        for (const [subY, subChunk] of this.subChunks) {
+            if (!subChunk.isEmpty) {
+                this.updateSubChunkMesh(subY, scene);
+            }
+        }
+        this.dirtySubChunks.clear();
+        this.isGenerated = true;
     }
     
     // Add face geometry (same as original Chunk.js)
