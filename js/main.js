@@ -2,6 +2,7 @@
 import { config, stats, updateRenderDistance } from './config.js';
 import { World } from './world/World.js';
 import { Sky } from './world/Sky.js';
+import { Clouds } from './world/Clouds.js';
 import { Player } from './player/Player.js';
 import { InputHandler } from './input/InputHandler.js';
 import { DebugOverlay } from './ui/DebugOverlay.js';
@@ -69,6 +70,10 @@ renderer.sortObjects = true;
 // Initialize sky system
 console.log('[Main] Creating sky system...');
 const sky = new Sky(scene);
+
+// Initialize cloud system
+console.log('[Main] Creating cloud system...');
+const clouds = new Clouds(scene);
 
 // Lighting
 const ambientLight = new THREE.AmbientLight(0xffffff, 0.6);
@@ -190,8 +195,9 @@ function animate() {
     const input = inputHandler.getInput();
     player.update(deltaTime, input, camera);
     
-    // Update sky
+    // Update sky and clouds
     sky.update(deltaTime, camera);
+    clouds.update(deltaTime, camera);
     
     // Log player position every 60 frames
     if (frameCount % 60 === 0) {
@@ -256,6 +262,9 @@ window.addEventListener('beforeunload', () => {
     }
     if (sky) {
         sky.dispose();
+    }
+    if (clouds) {
+        clouds.dispose();
     }
     if (debugOverlay) {
         debugOverlay.dispose();
