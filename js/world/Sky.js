@@ -1,4 +1,6 @@
 // Sky.js - Beautiful gradient sky system for infinite worlds
+import { config } from '../config.js';
+
 export class Sky {
     constructor(scene) {
         this.scene = scene;
