@@ -1,6 +1,7 @@
 // DEBUG: Agrega logs exhaustivos en el main loop
 import { config, stats, updateRenderDistance } from './config.js';
 import { World } from './world/World.js';
+import { Sky } from './world/Sky.js';
 import { Player } from './player/Player.js';
 import { InputHandler } from './input/InputHandler.js';
 import { DebugOverlay } from './ui/DebugOverlay.js';
@@ -10,8 +11,7 @@ console.log('[Main] Initializing game with config:', config);
 
 // Initialize Three.js
 const scene = new THREE.Scene();
-scene.fog = new THREE.Fog(0x87CEEB, 10, config.chunkSize * config.renderDistance * 1.5);
-scene.background = new THREE.Color(0x87CEEB);
+scene.fog = new THREE.Fog(0x89b2eb, 10, config.chunkSize * config.renderDistance * 1.5);
 
 // Camera setup
 const camera = new THREE.PerspectiveCamera(
@@ -65,6 +65,10 @@ updateRendererSize();
 // Enable optimizations
 renderer.shadowMap.enabled = false;
 renderer.sortObjects = true;
+
+// Initialize sky system
+console.log('[Main] Creating sky system...');
+const sky = new Sky(scene);
 
 // Lighting
 const ambientLight = new THREE.AmbientLight(0xffffff, 0.6);
@@ -186,6 +190,9 @@ function animate() {
     const input = inputHandler.getInput();
     player.update(deltaTime, input, camera);
     
+    // Update sky
+    sky.update(deltaTime, camera);
+    
     // Log player position every 60 frames
     if (frameCount % 60 === 0) {
         console.log('[Main] Player position:', {
@@ -246,6 +253,9 @@ window.addEventListener('beforeunload', () => {
     console.log('[Main] Cleaning up...');
     if (world.dispose) {
         world.dispose();
+    }
+    if (sky) {
+        sky.dispose();
     }
     if (debugOverlay) {
         debugOverlay.dispose();
