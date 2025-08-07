@@ -1,6 +1,61 @@
 import { config, BlockType, blockColors, stats } from '../config.js';
 
-// Chunk management with FIXED face rendering
+// Simple noise function for terrain generation
+class SimpleNoise {
+    constructor(seed = 12345) {
+        this.seed = seed;
+    }
+    
+    random(x, z) {
+        const n = Math.sin(x * 12.9898 + z * 78.233 + this.seed) * 43758.5453;
+        return (n - Math.floor(n));
+    }
+    
+    noise2D(x, z, scale = 1) {
+        x *= scale;
+        z *= scale;
+        
+        const xi = Math.floor(x);
+        const zi = Math.floor(z);
+        
+        const xf = x - xi;
+        const zf = z - zi;
+        
+        // Smooth interpolation
+        const u = xf * xf * (3 - 2 * xf);
+        const v = zf * zf * (3 - 2 * zf);
+        
+        // Get corner values
+        const aa = this.random(xi, zi);
+        const ba = this.random(xi + 1, zi);
+        const ab = this.random(xi, zi + 1);
+        const bb = this.random(xi + 1, zi + 1);
+        
+        // Interpolate
+        const x1 = aa * (1 - u) + ba * u;
+        const x2 = ab * (1 - u) + bb * u;
+        
+        return (x1 * (1 - v) + x2 * v) * 2 - 1;
+    }
+    
+    octaveNoise(x, z, octaves = 4, persistence = 0.5, scale = 0.02) {
+        let total = 0;
+        let amplitude = 1;
+        let frequency = scale;
+        let maxValue = 0;
+        
+        for (let i = 0; i < octaves; i++) {
+            total += this.noise2D(x, z, frequency) * amplitude;
+            maxValue += amplitude;
+            amplitude *= persistence;
+            frequency *= 2;
+        }
+        
+        return total / maxValue;
+    }
+}
+
+// Chunk management with IMPROVED terrain generation
 export class Chunk {
     constructor(x, z, world) {
         this.x = x;
@@ -9,24 +64,85 @@ export class Chunk {
         this.blocks = new Uint8Array(config.chunkSize * config.chunkSize * config.chunkSize);
         this.mesh = null;
         this.needsUpdate = true;
+        this.noise = new SimpleNoise(world.seed || 12345);
         this.generateTerrain();
     }
 
     generateTerrain() {
-        // Simple flat world generation with some variety
+        // Generate terrain with hills and valleys
         for (let x = 0; x < config.chunkSize; x++) {
             for (let z = 0; z < config.chunkSize; z++) {
                 const worldX = this.x * config.chunkSize + x;
                 const worldZ = this.z * config.chunkSize + z;
                 
-                // Generate flat terrain at y=0
-                this.setBlock(x, 0, z, BlockType.GRASS);
+                // Generate height using multiple octaves of noise
+                const baseHeight = 5; // Base terrain height
+                const hillHeight = 8; // Maximum hill height
                 
-                // Add some random blocks for variety
-                if (Math.random() < 0.02) {
-                    const height = Math.floor(Math.random() * 3) + 1;
-                    for (let y = 1; y <= height; y++) {
+                // Main terrain shape
+                const terrainNoise = this.noise.octaveNoise(worldX, worldZ, 4, 0.5, 0.02);
+                const detailNoise = this.noise.octaveNoise(worldX, worldZ, 2, 0.3, 0.1);
+                
+                // Calculate final height
+                const height = Math.floor(
+                    baseHeight + 
+                    terrainNoise * hillHeight + 
+                    detailNoise * 2
+                );
+                
+                // Clamp height to chunk bounds
+                const maxHeight = Math.min(height, config.chunkSize - 1);
+                
+                // Fill terrain layers
+                for (let y = 0; y <= maxHeight; y++) {
+                    let blockType = BlockType.STONE;
+                    
+                    // Surface layer
+                    if (y === maxHeight) {
+                        blockType = BlockType.GRASS;
+                    }
+                    // Dirt layer (2-3 blocks below surface)
+                    else if (y >= maxHeight - 3 && y < maxHeight) {
+                        blockType = BlockType.DIRT;
+                    }
+                    // Deep stone
+                    else {
+                        blockType = BlockType.STONE;
+                    }
+                    
+                    this.setBlock(x, y, z, blockType);
+                }
+                
+                // Add some random features
+                if (Math.random() < 0.01 && maxHeight < config.chunkSize - 4) {
+                    // Small stone pillars/rocks
+                    const pillarHeight = Math.floor(Math.random() * 3) + 1;
+                    for (let y = maxHeight + 1; y <= maxHeight + pillarHeight && y < config.chunkSize; y++) {
                         this.setBlock(x, y, z, BlockType.STONE);
+                    }
+                }
+            }
+        }
+        
+        // Add caves (simple implementation)
+        this.generateCaves();
+    }
+    
+    generateCaves() {
+        // Simple cave generation using 3D noise
+        for (let x = 1; x < config.chunkSize - 1; x++) {
+            for (let y = 1; y < config.chunkSize - 1; y++) {
+                for (let z = 1; z < config.chunkSize - 1; z++) {
+                    const worldX = this.x * config.chunkSize + x;
+                    const worldY = y;
+                    const worldZ = this.z * config.chunkSize + z;
+                    
+                    // Cave noise (3D)
+                    const caveNoise = this.noise.octaveNoise(worldX * 2, worldZ * 2 + worldY * 0.5, 2, 0.5, 0.05);
+                    
+                    // Create cave if noise is above threshold and not too close to surface
+                    if (caveNoise > 0.6 && y < 8) {
+                        this.setBlock(x, y, z, BlockType.AIR);
                     }
                 }
             }
@@ -116,6 +232,12 @@ export class Chunk {
                     ];
 
                     const color = new THREE.Color(blockColors[block]);
+                    
+                    // Add slight color variation for more natural look
+                    const variation = 0.05;
+                    color.r += (Math.random() - 0.5) * variation;
+                    color.g += (Math.random() - 0.5) * variation;
+                    color.b += (Math.random() - 0.5) * variation;
 
                     faces.forEach(face => {
                         if (this.shouldRenderFace(x, y, z, face.dir)) {
@@ -147,7 +269,7 @@ export class Chunk {
         // Create mesh with vertex colors
         const material = new THREE.MeshLambertMaterial({ 
             vertexColors: true,
-            side: THREE.FrontSide // FIXED: Use FrontSide only
+            side: THREE.FrontSide
         });
         
         this.mesh = new THREE.Mesh(geometry, material);
@@ -157,7 +279,7 @@ export class Chunk {
         this.needsUpdate = false;
     }
 
-    // FIXED: Corrected vertex winding order for proper face culling
+    // Add face geometry with correct winding order
     addFace(vertices, normals, colors, indices, x, y, z, face, color) {
         const size = config.blockSize;
         const half = size / 2;
@@ -204,7 +326,6 @@ export class Chunk {
                 normal = [-1, 0, 0];
                 break;
             case 'front':
-                // FIXED: Corrected winding order for front face
                 faceVertices = [
                     [x + half, y - half, z + half],
                     [x + half, y + half, z + half],
@@ -214,7 +335,6 @@ export class Chunk {
                 normal = [0, 0, 1];
                 break;
             case 'back':
-                // FIXED: Corrected winding order for back face
                 faceVertices = [
                     [x - half, y - half, z - half],
                     [x - half, y + half, z - half],
@@ -233,7 +353,7 @@ export class Chunk {
             colors.push(color.r, color.g, color.b);
         });
 
-        // Add indices for two triangles (FIXED: Correct winding order)
+        // Add indices for two triangles
         indices.push(
             baseIndex, baseIndex + 1, baseIndex + 2,
             baseIndex, baseIndex + 2, baseIndex + 3
