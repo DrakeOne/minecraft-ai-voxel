@@ -1,4 +1,4 @@
-// DEBUG: Agrega logs exhaustivos en el main loop
+// OPTIMIZADO: Sistema de logging profesional configurable
 import { config, stats, updateRenderDistance } from './config.js';
 import { World } from './world/World.js';
 import { Sky } from './world/Sky.js';
@@ -6,9 +6,10 @@ import { Clouds } from './world/Clouds.js';
 import { Player } from './player/Player.js';
 import { InputHandler } from './input/InputHandler.js';
 import { DebugOverlay } from './ui/DebugOverlay.js';
-import { WorkerManager } from './world/WorkerManager.js';  // Agregado para fix de workers
+import { WorkerManager } from './world/WorkerManager.js';
+import { Logger } from './utils/Logger.js';
 
-console.log('[Main] Initializing game with config:', config);
+Logger.info('[Main] Initializing game with config:', config);
 
 // Initialize Three.js
 const scene = new THREE.Scene();
@@ -25,7 +26,7 @@ const camera = new THREE.PerspectiveCamera(
 // Renderer setup with optimizations
 const canvas = document.getElementById('gameCanvas');
 if (!canvas) {
-    console.error('[Main] Canvas element not found!');
+    Logger.error('[Main] Canvas element not found!');
     throw new Error('Canvas element not found');
 }
 
@@ -38,7 +39,7 @@ const renderer = new THREE.WebGLRenderer({
     depth: true
 });
 
-console.log('[Main] Renderer created with capabilities:', {
+Logger.debug('[Main] Renderer created with capabilities:', {
     webgl2: renderer.capabilities.isWebGL2,
     maxTextures: renderer.capabilities.maxTextures,
     maxVertices: renderer.capabilities.maxVertices
@@ -58,7 +59,7 @@ function updateRendererSize() {
     camera.aspect = width / height;
     camera.updateProjectionMatrix();
     
-    console.log('[Main] Renderer resized:', { width, height, pixelRatio: renderer.getPixelRatio() });
+    Logger.debug('[Main] Renderer resized:', { width, height, pixelRatio: renderer.getPixelRatio() });
 }
 
 updateRendererSize();
@@ -68,11 +69,11 @@ renderer.shadowMap.enabled = false;
 renderer.sortObjects = true;
 
 // Initialize sky system
-console.log('[Main] Creating sky system...');
+Logger.debug('[Main] Creating sky system...');
 const sky = new Sky(scene);
 
 // Initialize cloud system
-console.log('[Main] Creating cloud system...');
+Logger.debug('[Main] Creating cloud system...');
 const clouds = new Clouds(scene);
 
 // Lighting
@@ -84,13 +85,13 @@ directionalLight.position.set(50, 100, 50);
 scene.add(directionalLight);
 
 // Initialize game objects
-console.log('[Main] Creating world instance...');
+Logger.info('[Main] Creating world instance...');
 const world = new World(scene);
 
-console.log('[Main] Creating player instance...');
+Logger.info('[Main] Creating player instance...');
 const player = new Player(world);
 
-console.log('[Main] Setting up input handler...');
+Logger.info('[Main] Setting up input handler...');
 const inputHandler = new InputHandler(canvas, player, world, camera, scene);
 
 // Initialize debug overlay
@@ -103,7 +104,7 @@ window.config = config;
 
 // Listen for worker toggle events
 window.addEventListener('toggleWorkers', (e) => {
-    console.log('[Main] Toggle workers:', e.detail);
+    Logger.info('[Main] Toggle workers:', e.detail);
     if (e.detail) {
         // Enable workers
         config.features.useWorkers = true;
@@ -114,11 +115,11 @@ window.addEventListener('toggleWorkers', (e) => {
         setTimeout(() => {
             if (world.workerManager && world.workerManager.isEnabled()) {
                 stats.workerStatus = 'enabled';
-                console.log('[Main] Workers enabled successfully');
+                Logger.info('[Main] Workers enabled successfully');
             } else {
                 stats.workerStatus = 'failed';
                 config.features.useWorkers = false;
-                console.log('[Main] Workers failed to initialize');
+                Logger.warn('[Main] Workers failed to initialize');
             }
         }, 1000);
     } else {
@@ -129,14 +130,14 @@ window.addEventListener('toggleWorkers', (e) => {
             world.workerManager = null;
         }
         stats.workerStatus = 'disabled';
-        console.log('[Main] Workers disabled');
+        Logger.info('[Main] Workers disabled');
     }
 });
 
 // Listen for render distance update events
 window.addEventListener('updateRenderDistance', (e) => {
     const newDistance = e.detail;
-    console.log('[Main] Updating render distance to:', newDistance);
+    Logger.info('[Main] Updating render distance to:', newDistance);
     
     // Update config
     const actualDistance = updateRenderDistance(newDistance);
@@ -152,7 +153,7 @@ window.addEventListener('updateRenderDistance', (e) => {
     // Force immediate chunk update
     world.updateChunksAroundPlayer(player.position.x, player.position.z, camera, scene);
     
-    console.log('[Main] Render distance updated successfully');
+    Logger.info('[Main] Render distance updated successfully');
 });
 
 // Prevent iOS bounce and ensure proper sizing
@@ -163,6 +164,7 @@ document.addEventListener('gesturechange', e => e.preventDefault());
 let lastTime = performance.now();
 let frameCount = 0;
 let lastFpsUpdate = performance.now();
+let logFrameCount = 0;
 
 function animate() {
     const currentTime = performance.now();
@@ -176,7 +178,8 @@ function animate() {
         frameCount = 0;
         lastFpsUpdate = currentTime;
         
-        console.log('[Main] Performance stats:', {
+        // Log performance stats solo en modo verbose
+        Logger.verbose('[Main] Performance stats:', {
             fps: stats.fps,
             visibleChunks: stats.visibleChunks,
             totalChunks: stats.totalChunks,
@@ -184,10 +187,10 @@ function animate() {
             frameTime: stats.frameTime.toFixed(2)
         });
         
-        // Log world stats if available
+        // Log world stats si están disponibles
         if (world.getStats) {
             const worldStats = world.getStats();
-            console.log('[Main] World stats:', worldStats);
+            Logger.verbose('[Main] World stats:', worldStats);
         }
     }
 
@@ -199,17 +202,18 @@ function animate() {
     sky.update(deltaTime, camera);
     clouds.update(deltaTime, camera);
     
-    // Log player position every 60 frames
-    if (frameCount % 60 === 0) {
-        console.log('[Main] Player position:', {
+    // Log player position cada 300 frames (5 segundos a 60fps)
+    logFrameCount++;
+    if (logFrameCount >= 300) {
+        Logger.debug('[Main] Player position:', {
             x: Math.floor(player.position.x),
             y: Math.floor(player.position.y),
             z: Math.floor(player.position.z)
         });
+        logFrameCount = 0;
     }
     
     // Update chunks
-    console.log('[Main] Updating chunks around player...');
     world.updateChunksAroundPlayer(player.position.x, player.position.z, camera, scene);
 
     // Update debug overlay
@@ -219,8 +223,11 @@ function animate() {
     document.getElementById('fps').textContent = `FPS: ${stats.fps}`;
     document.getElementById('coords').textContent = 
         `X: ${Math.floor(player.position.x)} Y: ${Math.floor(player.position.y)} Z: ${Math.floor(player.position.z)}`;
+    
+    // Mostrar información adicional de culling
+    const cullingInfo = stats.cullingEfficiency ? ` | Culling: ${stats.cullingEfficiency}%` : '';
     document.getElementById('debug').textContent = 
-        `Faces: ${stats.totalFaces} | Chunks: ${stats.visibleChunks}/${stats.totalChunks}`;
+        `Faces: ${stats.totalFaces} | Chunks: ${stats.visibleChunks}/${stats.totalChunks}${cullingInfo}`;
 
     // Render
     renderer.render(scene, camera);
@@ -229,7 +236,7 @@ function animate() {
 
 // Start game
 window.addEventListener('load', () => {
-    console.log('[Main] Game loading...');
+    Logger.info('[Main] Game loading...');
     
     // Hide loading screen
     setTimeout(() => {
@@ -241,7 +248,7 @@ window.addEventListener('load', () => {
             const loading = document.getElementById('loading');
             if (loading) {
                 loading.style.display = 'none';
-                console.log('[Main] Loading screen hidden, starting game loop');
+                Logger.info('[Main] Loading screen hidden, starting game loop');
                 animate();
             }
         }, 300);
@@ -250,13 +257,13 @@ window.addEventListener('load', () => {
 
 // Handle window resize
 window.addEventListener('resize', () => {
-    console.log('[Main] Window resized');
+    Logger.debug('[Main] Window resized');
     updateRendererSize();
 });
 
 // Cleanup on page unload
 window.addEventListener('beforeunload', () => {
-    console.log('[Main] Cleaning up...');
+    Logger.info('[Main] Cleaning up...');
     if (world.dispose) {
         world.dispose();
     }
