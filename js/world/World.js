@@ -6,44 +6,28 @@ import { WorkerManager } from './WorkerManager.js';
 import { MemoryManager } from './MemoryManager.js';
 import { Logger } from '../utils/Logger.js';
 
-// Frustum Culling Class - OPTIMIZADO Y PERFECCIONADO
+// Sistema de Frustum Culling mejorado con priorización
 class FrustumCuller {
     constructor() {
         this.frustum = new THREE.Frustum();
         this.matrix = new THREE.Matrix4();
-        this.expandedFrustum = new THREE.Frustum();
-        this.expandedMatrix = new THREE.Matrix4();
-        
-        // Cache para evitar recálculos
         this.visibilityCache = new Map();
         this.cacheFrameCount = 0;
-        this.CACHE_LIFETIME = 5; // Frames antes de recalcular
-        
-        // Bounding boxes pre-calculadas
+        this.CACHE_LIFETIME = 2; // Reducido para respuesta más rápida
         this.boundingBoxes = new Map();
     }
 
-    update(camera, expansionFactor = 1.5) {
-        // Limpiar cache cada N frames
+    update(camera) {
         this.cacheFrameCount++;
         if (this.cacheFrameCount > this.CACHE_LIFETIME) {
             this.visibilityCache.clear();
             this.cacheFrameCount = 0;
         }
         
-        // Update normal frustum
         this.matrix.multiplyMatrices(camera.projectionMatrix, camera.matrixWorldInverse);
         this.frustum.setFromProjectionMatrix(this.matrix);
-        
-        // Create expanded frustum for predictive loading
-        const expandedCamera = camera.clone();
-        expandedCamera.fov = Math.min(camera.fov * expansionFactor, 120); // Limitar expansión
-        expandedCamera.updateProjectionMatrix();
-        this.expandedMatrix.multiplyMatrices(expandedCamera.projectionMatrix, camera.matrixWorldInverse);
-        this.expandedFrustum.setFromProjectionMatrix(this.expandedMatrix);
     }
 
-    // Obtener o crear bounding box para un chunk
     getChunkBoundingBox(chunkX, chunkZ) {
         const key = `${chunkX},${chunkZ}`;
         
@@ -68,7 +52,6 @@ class FrustumCuller {
     isChunkVisible(chunkX, chunkZ, forceCheck = false) {
         const key = `${chunkX},${chunkZ}`;
         
-        // Usar cache si existe y no se fuerza el chequeo
         if (!forceCheck && this.visibilityCache.has(key)) {
             return this.visibilityCache.get(key);
         }
@@ -76,78 +59,150 @@ class FrustumCuller {
         const box = this.getChunkBoundingBox(chunkX, chunkZ);
         const isVisible = this.frustum.intersectsBox(box);
         
-        // Guardar en cache
         this.visibilityCache.set(key, isVisible);
         
         return isVisible;
     }
     
-    isChunkInExpandedView(chunkX, chunkZ) {
-        const box = this.getChunkBoundingBox(chunkX, chunkZ);
-        return this.expandedFrustum.intersectsBox(box);
-    }
-    
-    // Método optimizado para chequear múltiples chunks
-    filterVisibleChunks(chunks, forceCheck = false) {
-        return chunks.filter(([x, z]) => this.isChunkVisible(x, z, forceCheck));
-    }
-    
-    // Limpiar recursos
     dispose() {
         this.visibilityCache.clear();
         this.boundingBoxes.clear();
     }
 }
 
-// World management - OPTIMIZADO
+// Sistema de priorización de chunks mejorado
+class ChunkPrioritySystem {
+    constructor() {
+        this.priorities = new Map();
+        this.loadQueue = [];
+        this.lastCameraDirection = new THREE.Vector3();
+        this.lastPlayerPos = new THREE.Vector3();
+    }
+    
+    calculatePriority(chunkX, chunkZ, playerPos, cameraDirection, isMoving) {
+        const chunkCenterX = chunkX * config.chunkSize + config.chunkSize / 2;
+        const chunkCenterZ = chunkZ * config.chunkSize + config.chunkSize / 2;
+        
+        // Distancia al jugador
+        const dx = chunkCenterX - playerPos.x;
+        const dz = chunkCenterZ - playerPos.z;
+        const distance = Math.sqrt(dx * dx + dz * dz);
+        
+        // Dirección hacia el chunk
+        const toChunk = new THREE.Vector3(dx, 0, dz).normalize();
+        
+        // Factor de dirección de vista (más importante)
+        const viewDot = toChunk.dot(cameraDirection);
+        const viewFactor = (viewDot + 1) * 0.5; // 0 a 1
+        
+        // Prioridad base por distancia (invertida para que menor = mejor)
+        let priority = distance / config.chunkSize;
+        
+        // CRÍTICO: Chunks directamente en frente tienen máxima prioridad
+        if (viewFactor > 0.8) {
+            priority *= 0.1; // 90% reducción para chunks al frente
+        } else if (viewFactor > 0.5) {
+            priority *= 0.3; // 70% reducción para chunks semi-frontales
+        } else if (viewFactor > 0) {
+            priority *= 0.6; // 40% reducción para chunks laterales
+        } else {
+            priority *= 2; // Penalización para chunks detrás
+        }
+        
+        // Bonus para chunks muy cercanos (radio 2)
+        if (distance < config.chunkSize * 2) {
+            priority *= 0.1; // Máxima prioridad para chunks inmediatos
+        }
+        
+        // Si el jugador se mueve, priorizar la dirección de movimiento
+        if (isMoving) {
+            const moveDot = toChunk.dot(isMoving);
+            if (moveDot > 0.5) {
+                priority *= 0.5; // Bonus para dirección de movimiento
+            }
+        }
+        
+        return priority;
+    }
+    
+    updatePriorities(chunks, playerPos, camera) {
+        this.priorities.clear();
+        
+        // Obtener dirección de la cámara
+        const cameraDirection = new THREE.Vector3(0, 0, -1);
+        cameraDirection.applyQuaternion(camera.quaternion);
+        cameraDirection.y = 0;
+        cameraDirection.normalize();
+        
+        // Calcular velocidad del jugador
+        const playerMovement = new THREE.Vector3();
+        playerMovement.subVectors(playerPos, this.lastPlayerPos);
+        const isMoving = playerMovement.length() > 0.1 ? playerMovement.normalize() : null;
+        
+        this.lastPlayerPos.copy(playerPos);
+        this.lastCameraDirection.copy(cameraDirection);
+        
+        // Calcular prioridades
+        for (const [chunkX, chunkZ] of chunks) {
+            const priority = this.calculatePriority(
+                chunkX, chunkZ, 
+                playerPos, 
+                cameraDirection, 
+                isMoving
+            );
+            this.priorities.set(`${chunkX},${chunkZ}`, priority);
+        }
+        
+        // Ordenar chunks por prioridad
+        this.loadQueue = Array.from(chunks)
+            .sort((a, b) => {
+                const keyA = `${a[0]},${a[1]}`;
+                const keyB = `${b[0]},${b[1]}`;
+                return (this.priorities.get(keyA) || 999) - (this.priorities.get(keyB) || 999);
+            });
+    }
+    
+    getNextChunks(count) {
+        return this.loadQueue.splice(0, count);
+    }
+}
+
+// World management - OPTIMIZADO TIPO MINECRAFT
 export class World {
     constructor(scene) {
         this.scene = scene;
         this.chunks = new Map();
         this.chunkColumns = new Map();
         this.loadedChunks = new Set();
+        this.loadingChunks = new Set();
         this.frustumCuller = new FrustumCuller();
-        
-        // Sistema de gestión de memoria
+        this.prioritySystem = new ChunkPrioritySystem();
         this.memoryManager = new MemoryManager();
         
-        // Predictive loading
-        this.playerVelocity = new THREE.Vector3();
-        this.lastPlayerPos = new THREE.Vector3();
-        this.chunkLoadQueue = [];
-        this.priorityQueue = new Map();
+        // Control de carga
+        this.chunksToLoad = [];
+        this.lastUpdateTime = 0;
+        this.updateInterval = 50; // ms entre actualizaciones
+        this.maxChunksPerUpdate = 3; // Chunks por actualización
         
-        // Performance settings
-        this.maxChunksPerFrame = config.performance.maxChunksPerFrame || 3;
-        this.predictiveDistance = config.performance.predictiveDistance || 2;
-        
-        // Estadísticas de frustum culling
-        this.cullingStats = {
-            totalChecked: 0,
-            totalCulled: 0,
-            efficiency: 0
-        };
-        
-        // NUEVO: Sistema avanzado de carga de chunks
+        // Sistema avanzado de carga
         this.useAdvancedLoader = config.features.useAdvancedLoader;
         if (this.useAdvancedLoader) {
             this.chunkLoader = new ChunkLoader(this, scene);
         }
         
-        // NUEVO: Worker Manager para generación asíncrona
+        // Worker Manager
         this.workerManager = null;
         if (config.features.useWorkers) {
-            Logger.info('[World] Attempting to initialize Web Workers...');
+            Logger.info('[World] Initializing Web Workers...');
             try {
                 this.workerManager = new WorkerManager(this, scene);
-                
                 setTimeout(() => {
                     if (this.workerManager && this.workerManager.isEnabled()) {
                         stats.workerStatus = 'enabled';
-                        Logger.info('[World] Web Workers enabled successfully');
+                        Logger.info('[World] Web Workers enabled');
                     } else {
                         stats.workerStatus = 'disabled';
-                        Logger.info('[World] Web Workers disabled or failed to initialize');
                         config.features.useWorkers = false;
                     }
                 }, 1500);
@@ -158,10 +213,8 @@ export class World {
             }
         }
         
-        // Seed para generación procedural
         this.seed = Math.floor(Math.random() * 1000000);
-        
-        Logger.info('[World] World initialized with frustum culling and memory management');
+        Logger.info('[World] World initialized with improved chunk loading');
     }
 
     getChunkKey(x, z) {
@@ -171,13 +224,11 @@ export class World {
     getChunk(x, z) {
         const key = this.getChunkKey(x, z);
         if (!this.chunks.has(key)) {
-            // Verificar límite de memoria antes de crear nuevo chunk
             if (this.memoryManager.canAllocateChunk()) {
                 this.chunks.set(key, new Chunk(x, z, this));
                 this.memoryManager.registerChunk(key);
             } else {
-                Logger.warn('[World] Memory limit reached, cannot create new chunk');
-                // Intentar liberar memoria
+                Logger.warn('[World] Memory limit reached');
                 this.memoryManager.freeOldestChunks(this, 5);
                 return null;
             }
@@ -185,7 +236,6 @@ export class World {
         return this.chunks.get(key);
     }
     
-    // NEW: Get chunk column for vertical chunks system
     getChunkColumn(x, z) {
         const key = this.getChunkKey(x, z);
         if (!this.chunkColumns.has(key)) {
@@ -193,213 +243,200 @@ export class World {
                 this.chunkColumns.set(key, new ChunkColumn(x, z, this));
                 this.memoryManager.registerChunk(key);
             } else {
-                Logger.warn('[World] Memory limit reached, cannot create new chunk column');
+                Logger.warn('[World] Memory limit reached');
                 return null;
             }
         }
         return this.chunkColumns.get(key);
     }
 
-    // Get block from world coordinates (handles cross-chunk queries)
     getBlockAtWorldCoords(worldX, worldY, worldZ) {
         const chunkX = Math.floor(worldX / config.chunkSize);
         const chunkZ = Math.floor(worldZ / config.chunkSize);
         const localX = ((worldX % config.chunkSize) + config.chunkSize) % config.chunkSize;
         const localZ = ((worldZ % config.chunkSize) + config.chunkSize) % config.chunkSize;
         
-        // Use chunk columns if workers are enabled
         if (this.workerManager && this.workerManager.isEnabled() && config.features.useWorkers) {
             const chunkColumn = this.getChunkColumn(chunkX, chunkZ);
             return chunkColumn ? chunkColumn.getBlock(localX, worldY, localZ) : 0;
         }
         
-        // Fallback to regular chunks
         const chunk = this.getChunk(chunkX, chunkZ);
         return chunk ? chunk.getBlock(localX, worldY, localZ) : 0;
     }
 
-    // Calculate chunk priority based on distance and direction
-    calculateChunkPriority(chunkX, chunkZ, playerX, playerZ, playerVelocity) {
-        const dx = chunkX * config.chunkSize - playerX;
-        const dz = chunkZ * config.chunkSize - playerZ;
-        const distance = Math.sqrt(dx * dx + dz * dz);
+    // NUEVO: Sistema de actualización tipo Minecraft
+    updateChunksAroundPlayer(playerX, playerZ, camera, scene) {
+        const currentTime = performance.now();
         
-        // Direction factor - prioritize chunks in movement direction
-        let directionBonus = 0;
-        if (playerVelocity.length() > 0.1) {
-            const chunkDir = new THREE.Vector2(dx, dz).normalize();
-            const moveDir = new THREE.Vector2(playerVelocity.x, playerVelocity.z).normalize();
-            directionBonus = Math.max(0, chunkDir.dot(moveDir)) * 50;
+        // Limitar frecuencia de actualización completa
+        if (currentTime - this.lastUpdateTime < this.updateInterval) {
+            this.processChunkQueue();
+            return;
         }
         
-        // Lower priority value = higher priority
-        return distance - directionBonus;
-    }
-
-    // OPTIMIZADO: Actualización de chunks con frustum culling perfeccionado
-    updateChunksAroundPlayer(playerX, playerZ, camera, scene) {
-        // NUEVO: Usar el sistema avanzado si está activado
+        this.lastUpdateTime = currentTime;
+        
+        // Usar loader avanzado si está activo
         if (this.useAdvancedLoader && this.chunkLoader) {
             this.chunkLoader.update({ x: playerX, z: playerZ }, camera);
             return;
         }
         
-        // Update frustum culling
+        // Actualizar frustum
         this.frustumCuller.update(camera);
         
-        // Calculate player velocity for prediction
-        const currentPos = new THREE.Vector3(playerX, 0, playerZ);
-        this.playerVelocity.subVectors(currentPos, this.lastPlayerPos);
-        this.lastPlayerPos.copy(currentPos);
+        const playerChunkX = Math.floor(playerX / config.chunkSize);
+        const playerChunkZ = Math.floor(playerZ / config.chunkSize);
         
-        const chunkX = Math.floor(playerX / config.chunkSize);
-        const chunkZ = Math.floor(playerZ / config.chunkSize);
+        // PASO 1: Identificar TODOS los chunks necesarios
+        const requiredChunks = new Map();
+        const renderDistSq = config.renderDistance * config.renderDistance;
         
-        // Estadísticas de culling
-        this.cullingStats.totalChecked = 0;
-        this.cullingStats.totalCulled = 0;
-        
-        // PASO 1: Identificar chunks que deben estar cargados
-        const chunksToLoad = [];
-        const chunksInRange = new Set();
-        
-        // Iterar sobre chunks en rango de render
-        for (let x = -config.renderDistance; x <= config.renderDistance; x++) {
-            for (let z = -config.renderDistance; z <= config.renderDistance; z++) {
-                const cx = chunkX + x;
-                const cz = chunkZ + z;
-                const key = this.getChunkKey(cx, cz);
-                
-                this.cullingStats.totalChecked++;
-                
-                // FRUSTUM CULLING APLICADO CORRECTAMENTE
-                const isVisible = this.frustumCuller.isChunkVisible(cx, cz);
-                const isInExpandedView = this.frustumCuller.isChunkInExpandedView(cx, cz);
-                
-                if (!isVisible && !isInExpandedView) {
-                    this.cullingStats.totalCulled++;
-                    // Si el chunk no es visible y no está en vista expandida, skip
-                    if (this.loadedChunks.has(key)) {
-                        // Mantener chunks cercanos aunque no sean visibles
-                        const distance = Math.max(Math.abs(cx - chunkX), Math.abs(cz - chunkZ));
-                        if (distance <= 2) {
-                            chunksInRange.add(key);
-                        }
-                    }
-                    continue;
-                }
-                
-                chunksInRange.add(key);
-                
-                // Si el chunk es visible y no está cargado, agregarlo a la cola
-                if (isVisible && !this.loadedChunks.has(key)) {
-                    const priority = this.calculateChunkPriority(cx, cz, playerX, playerZ, this.playerVelocity);
-                    chunksToLoad.push({ x: cx, z: cz, key, priority });
+        for (let dx = -config.renderDistance - 1; dx <= config.renderDistance + 1; dx++) {
+            for (let dz = -config.renderDistance - 1; dz <= config.renderDistance + 1; dz++) {
+                const distSq = dx * dx + dz * dz;
+                if (distSq <= renderDistSq + 2) { // +2 para buffer
+                    const chunkX = playerChunkX + dx;
+                    const chunkZ = playerChunkZ + dz;
+                    const key = this.getChunkKey(chunkX, chunkZ);
+                    requiredChunks.set(key, [chunkX, chunkZ]);
                 }
             }
         }
         
-        // Calcular eficiencia del culling
-        this.cullingStats.efficiency = this.cullingStats.totalCulled / Math.max(1, this.cullingStats.totalChecked);
+        // PASO 2: Actualizar prioridades
+        const playerPos = new THREE.Vector3(playerX, 0, playerZ);
+        this.prioritySystem.updatePriorities(
+            Array.from(requiredChunks.values()),
+            playerPos,
+            camera
+        );
         
-        // PASO 2: Cargar chunks por prioridad
-        chunksToLoad.sort((a, b) => a.priority - b.priority);
-        const chunksToLoadThisFrame = chunksToLoad.slice(0, this.maxChunksPerFrame);
+        // PASO 3: Cargar chunks prioritarios
+        this.chunksToLoad = [];
+        const chunksToProcess = this.prioritySystem.getNextChunks(999); // Obtener todos ordenados
         
-        for (const chunk of chunksToLoadThisFrame) {
-            this.loadChunk(chunk.x, chunk.z);
-            this.loadedChunks.add(chunk.key);
+        for (const [chunkX, chunkZ] of chunksToProcess) {
+            const key = this.getChunkKey(chunkX, chunkZ);
+            
+            // Skip si ya está cargado o cargando
+            if (this.loadedChunks.has(key) || this.loadingChunks.has(key)) {
+                continue;
+            }
+            
+            // Verificar visibilidad ANTES de cargar
+            const isVisible = this.frustumCuller.isChunkVisible(chunkX, chunkZ);
+            const distance = Math.sqrt(
+                Math.pow(chunkX - playerChunkX, 2) + 
+                Math.pow(chunkZ - playerChunkZ, 2)
+            );
+            
+            // Cargar si: está visible O está muy cerca (radio 2)
+            if (isVisible || distance <= 2) {
+                this.chunksToLoad.push([chunkX, chunkZ, key]);
+            }
         }
         
-        // PASO 3: Descargar chunks fuera de rango o no visibles
+        // PASO 4: Procesar cola de carga inmediatamente
+        this.processChunkQueue();
+        
+        // PASO 5: Descargar chunks lejanos
+        this.unloadDistantChunks(playerChunkX, playerChunkZ, requiredChunks);
+        
+        // Actualizar estadísticas
+        this.updateStats();
+    }
+    
+    // Procesar cola de chunks a cargar
+    processChunkQueue() {
+        const chunksThisFrame = Math.min(
+            this.chunksToLoad.length,
+            this.getAdaptiveChunkLimit()
+        );
+        
+        for (let i = 0; i < chunksThisFrame; i++) {
+            const [chunkX, chunkZ, key] = this.chunksToLoad.shift();
+            if (!key) break;
+            
+            this.loadChunk(chunkX, chunkZ, key);
+        }
+    }
+    
+    // Límite adaptativo basado en rendimiento
+    getAdaptiveChunkLimit() {
+        if (stats.fps > 50) return 5;
+        if (stats.fps > 40) return 4;
+        if (stats.fps > 30) return 3;
+        if (stats.fps > 20) return 2;
+        return 1;
+    }
+
+    // Cargar un chunk individual
+    loadChunk(cx, cz, key) {
+        if (this.loadedChunks.has(key) || this.loadingChunks.has(key)) return;
+        
+        this.loadingChunks.add(key);
+        Logger.debug(`[World] Loading chunk ${key}`);
+        
+        if (this.workerManager && this.workerManager.isEnabled() && config.features.useWorkers) {
+            // Generación asíncrona con workers
+            const requested = this.workerManager.requestChunk(cx, cz);
+            if (requested) {
+                // El worker manejará la carga
+                setTimeout(() => {
+                    this.loadingChunks.delete(key);
+                    this.loadedChunks.add(key);
+                }, 100);
+            } else if (config.features.fallbackToSync) {
+                this.generateChunkSync(cx, cz, key);
+            }
+        } else {
+            // Generación síncrona
+            this.generateChunkSync(cx, cz, key);
+        }
+    }
+    
+    // Generación síncrona de chunk
+    generateChunkSync(cx, cz, key) {
+        const chunk = this.getChunk(cx, cz);
+        if (chunk) {
+            chunk.updateMesh(this.scene);
+            this.memoryManager.updateChunkAccess(key);
+        }
+        
+        this.loadingChunks.delete(key);
+        this.loadedChunks.add(key);
+    }
+
+    // Descargar chunks lejanos
+    unloadDistantChunks(playerChunkX, playerChunkZ, requiredChunks) {
         const chunksToUnload = [];
+        const maxDistance = config.renderDistance + 3; // Buffer de 3 chunks
+        
         for (const key of this.loadedChunks) {
-            if (!chunksInRange.has(key)) {
+            if (!requiredChunks.has(key)) {
                 const [x, z] = key.split(',').map(Number);
-                const distance = Math.max(Math.abs(x - chunkX), Math.abs(z - chunkZ));
+                const distance = Math.max(
+                    Math.abs(x - playerChunkX), 
+                    Math.abs(z - playerChunkZ)
+                );
                 
-                // Mantener un buffer para evitar carga/descarga constante
-                if (distance > config.renderDistance + 2) {
+                if (distance > maxDistance) {
                     chunksToUnload.push(key);
                 }
             }
         }
         
-        // Descargar chunks
         for (const key of chunksToUnload) {
             this.unloadChunk(key);
-            this.loadedChunks.delete(key);
-        }
-        
-        // Update stats
-        stats.visibleChunks = this.loadedChunks.size;
-        stats.totalChunks = this.cullingStats.totalChecked;
-        stats.culledChunks = this.cullingStats.totalCulled;
-        stats.cullingEfficiency = Math.round(this.cullingStats.efficiency * 100);
-        
-        // Log culling stats solo en modo debug
-        Logger.debug(`[World] Frustum Culling: ${stats.culledChunks}/${stats.totalChunks} chunks culled (${stats.cullingEfficiency}% efficiency)`);
-    }
-
-    // Load a single chunk
-    loadChunk(cx, cz) {
-        const key = this.getChunkKey(cx, cz);
-        if (this.loadedChunks.has(key)) return;
-        
-        Logger.debug(`[World] Loading chunk ${key}`);
-        
-        // Use chunk columns if workers are enabled
-        if (this.workerManager && this.workerManager.isEnabled() && config.features.useWorkers) {
-            // Request async generation for chunk column
-            const requested = this.workerManager.requestChunk(cx, cz);
-            if (!requested && config.features.fallbackToSync) {
-                // Fallback to sync generation
-                this.generateChunkColumnSync(cx, cz);
-            }
-        } else {
-            // Regular chunk generation
-            const chunk = this.getChunk(cx, cz);
-            if (chunk) {
-                chunk.updateMesh(this.scene);
-                this.memoryManager.updateChunkAccess(key);
-            }
         }
     }
 
-    // Sync fallback for chunk column generation
-    generateChunkColumnSync(cx, cz) {
-        const chunkColumn = this.getChunkColumn(cx, cz);
-        if (!chunkColumn) return;
-        
-        // Generate simple terrain for all sub-chunks
-        for (let subY = 0; subY < config.verticalChunks; subY++) {
-            const baseY = subY * config.subChunkHeight;
-            const subChunk = chunkColumn.getOrCreateSubChunk(subY);
-            
-            // Simple terrain generation for fallback
-            if (baseY < 64) {
-                for (let x = 0; x < config.chunkSize; x++) {
-                    for (let z = 0; z < config.chunkSize; z++) {
-                        for (let y = 0; y < config.subChunkHeight; y++) {
-                            const worldY = baseY + y;
-                            if (worldY < 60) {
-                                chunkColumn.setBlock(x, worldY, z, 3); // Stone
-                            } else if (worldY === 60) {
-                                chunkColumn.setBlock(x, worldY, z, 1); // Grass
-                            }
-                        }
-                    }
-                }
-            }
-        }
-        chunkColumn.updateAllDirtyMeshes(this.scene);
-    }
-
-    // Unload a chunk
+    // Descargar un chunk
     unloadChunk(key) {
         Logger.debug(`[World] Unloading chunk ${key}`);
         
-        // Unload chunk columns if using workers
         if (this.workerManager && this.workerManager.isEnabled() && config.features.useWorkers) {
             const chunkColumn = this.chunkColumns.get(key);
             if (chunkColumn) {
@@ -407,7 +444,6 @@ export class World {
                 this.chunkColumns.delete(key);
             }
         } else {
-            // Unload regular chunks
             const chunk = this.chunks.get(key);
             if (chunk && chunk.mesh) {
                 this.scene.remove(chunk.mesh);
@@ -419,30 +455,40 @@ export class World {
         
         this.memoryManager.unregisterChunk(key);
         this.loadedChunks.delete(key);
+        this.loadingChunks.delete(key);
     }
 
-    // NEW: Method to dynamically update render distance
+    // Actualizar distancia de renderizado
     updateRenderDistance(newDistance) {
-        Logger.info(`[World] Updating render distance from ${config.renderDistance} to ${newDistance}`);
-        
-        const oldDistance = config.renderDistance;
+        Logger.info(`[World] Updating render distance to ${newDistance}`);
         config.renderDistance = newDistance;
         
-        // If using advanced loader, update it
-        if (this.useAdvancedLoader && this.chunkLoader) {
-            Logger.debug('[World] Advanced loader will update on next cycle');
-            return;
+        // Ajustar límites basados en distancia
+        this.maxChunksPerUpdate = Math.max(3, Math.min(10, Math.floor(newDistance / 2)));
+        
+        // Forzar actualización completa
+        this.lastUpdateTime = 0;
+    }
+    
+    // Actualizar estadísticas
+    updateStats() {
+        stats.visibleChunks = this.loadedChunks.size;
+        stats.totalChunks = this.chunks.size + this.chunkColumns.size;
+        stats.chunksInQueue = this.chunksToLoad.length;
+        stats.chunksProcessing = this.loadingChunks.size;
+        
+        // Calcular eficiencia de culling
+        let visibleInFrustum = 0;
+        for (const key of this.loadedChunks) {
+            const [x, z] = key.split(',').map(Number);
+            if (this.frustumCuller.isChunkVisible(x, z)) {
+                visibleInFrustum++;
+            }
         }
         
-        // Update max chunks per frame based on render distance
-        this.maxChunksPerFrame = Math.max(3, Math.min(10, Math.floor(newDistance / 2)));
-        
-        // Force immediate chunk update
-        const playerX = window.player ? window.player.position.x : 0;
-        const playerZ = window.player ? window.player.position.z : 0;
-        this.updateChunksAroundPlayer(playerX, playerZ, this.scene._camera || camera, this.scene);
-        
-        Logger.info('[World] Render distance update complete');
+        stats.cullingEfficiency = this.loadedChunks.size > 0 
+            ? Math.round((visibleInFrustum / this.loadedChunks.size) * 100)
+            : 0;
     }
 
     getBlockAt(x, y, z) {
@@ -459,92 +505,69 @@ export class World {
         const localX = ((worldX % config.chunkSize) + config.chunkSize) % config.chunkSize;
         const localZ = ((worldZ % config.chunkSize) + config.chunkSize) % config.chunkSize;
         
-        // Use chunk columns if workers are enabled
         if (this.workerManager && this.workerManager.isEnabled() && config.features.useWorkers) {
             const chunkColumn = this.getChunkColumn(chunkX, chunkZ);
             if (chunkColumn) {
                 chunkColumn.setBlock(localX, worldY, localZ, type);
                 chunkColumn.updateAllDirtyMeshes(scene);
                 
-                // Update neighboring chunk columns if on boundary
-                const columnsToUpdate = new Set();
-                
-                if (localX === 0) columnsToUpdate.add(this.getChunkColumn(chunkX - 1, chunkZ));
-                if (localX === config.chunkSize - 1) columnsToUpdate.add(this.getChunkColumn(chunkX + 1, chunkZ));
-                if (localZ === 0) columnsToUpdate.add(this.getChunkColumn(chunkX, chunkZ - 1));
-                if (localZ === config.chunkSize - 1) columnsToUpdate.add(this.getChunkColumn(chunkX, chunkZ + 1));
-                
-                columnsToUpdate.forEach(column => {
-                    if (column && this.loadedChunks.has(this.getChunkKey(column.x, column.z))) {
-                        column.updateAllDirtyMeshes(scene);
-                    }
-                });
+                // Actualizar chunks vecinos si es necesario
+                this.updateNeighborChunks(chunkX, chunkZ, localX, localZ, scene);
             }
         } else {
-            // Regular chunk system
             const chunk = this.getChunk(chunkX, chunkZ);
             if (chunk) {
                 chunk.setBlock(localX, worldY, localZ, type);
                 chunk.updateMesh(scene);
                 
-                // Update all potentially affected adjacent chunks
-                const chunksToUpdate = new Set();
-                
-                if (localX === 0) chunksToUpdate.add(this.getChunk(chunkX - 1, chunkZ));
-                if (localX === config.chunkSize - 1) chunksToUpdate.add(this.getChunk(chunkX + 1, chunkZ));
-                if (localZ === 0) chunksToUpdate.add(this.getChunk(chunkX, chunkZ - 1));
-                if (localZ === config.chunkSize - 1) chunksToUpdate.add(this.getChunk(chunkX, chunkZ + 1));
-                
-                chunksToUpdate.forEach(chunk => {
-                    if (chunk && this.loadedChunks.has(this.getChunkKey(chunk.x, chunk.z))) {
-                        chunk.updateMesh(scene);
-                    }
-                });
+                // Actualizar chunks vecinos si es necesario
+                this.updateNeighborChunks(chunkX, chunkZ, localX, localZ, scene);
             }
         }
     }
     
-    // NUEVO: Obtener estadísticas del sistema
-    getStats() {
-        const baseStats = {
-            chunksLoaded: this.loadedChunks.size,
-            totalChunks: this.chunks.size,
-            totalChunkColumns: this.chunkColumns.size,
-            workerEnabled: this.workerManager ? this.workerManager.isEnabled() : false,
-            queueSize: this.priorityQueue.size,
-            maxChunksPerFrame: this.maxChunksPerFrame,
-            frustumCulling: {
-                checked: this.cullingStats.totalChecked,
-                culled: this.cullingStats.totalCulled,
-                efficiency: `${Math.round(this.cullingStats.efficiency * 100)}%`
-            },
-            memory: this.memoryManager.getStats()
-        };
+    // Actualizar chunks vecinos cuando se modifica un borde
+    updateNeighborChunks(chunkX, chunkZ, localX, localZ, scene) {
+        const updates = [];
         
-        if (this.useAdvancedLoader && this.chunkLoader) {
-            return {
-                ...baseStats,
-                ...this.chunkLoader.getStats(),
-                poolStats: this.chunkLoader.chunkPool.getStats(),
-                cacheStats: this.chunkLoader.cache.getStats(),
-                gridStats: this.chunkLoader.spatialGrid.getStats()
-            };
+        if (localX === 0) updates.push([chunkX - 1, chunkZ]);
+        if (localX === config.chunkSize - 1) updates.push([chunkX + 1, chunkZ]);
+        if (localZ === 0) updates.push([chunkX, chunkZ - 1]);
+        if (localZ === config.chunkSize - 1) updates.push([chunkX, chunkZ + 1]);
+        
+        for (const [cx, cz] of updates) {
+            const key = this.getChunkKey(cx, cz);
+            if (this.loadedChunks.has(key)) {
+                if (this.workerManager && this.workerManager.isEnabled()) {
+                    const column = this.chunkColumns.get(key);
+                    if (column) column.updateAllDirtyMeshes(scene);
+                } else {
+                    const chunk = this.chunks.get(key);
+                    if (chunk) chunk.updateMesh(scene);
+                }
+            }
         }
-        
-        return baseStats;
     }
     
-    // NUEVO: Limpiar recursos
+    getStats() {
+        return {
+            chunksLoaded: this.loadedChunks.size,
+            chunksLoading: this.loadingChunks.size,
+            chunksQueued: this.chunksToLoad.length,
+            totalChunks: this.chunks.size,
+            totalColumns: this.chunkColumns.size,
+            workerEnabled: this.workerManager ? this.workerManager.isEnabled() : false,
+            memory: this.memoryManager.getStats(),
+            cullingEfficiency: stats.cullingEfficiency + '%'
+        };
+    }
+    
     dispose() {
         Logger.info('[World] Disposing world resources...');
         
-        // Dispose frustum culler
         this.frustumCuller.dispose();
-        
-        // Dispose memory manager
         this.memoryManager.dispose();
         
-        // Dispose worker manager
         if (this.workerManager) {
             this.workerManager.dispose();
             this.workerManager = null;
@@ -554,12 +577,10 @@ export class World {
             this.chunkLoader.dispose();
         }
         
-        // Limpiar chunk columns
         for (const chunkColumn of this.chunkColumns.values()) {
             chunkColumn.dispose(this.scene);
         }
         
-        // Limpiar chunks existentes
         for (const chunk of this.chunks.values()) {
             if (chunk.mesh) {
                 this.scene.remove(chunk.mesh);
@@ -571,7 +592,8 @@ export class World {
         this.chunks.clear();
         this.chunkColumns.clear();
         this.loadedChunks.clear();
-        this.priorityQueue.clear();
+        this.loadingChunks.clear();
+        this.chunksToLoad = [];
         
         Logger.info('[World] World resources disposed');
     }
