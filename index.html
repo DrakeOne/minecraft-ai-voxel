@@ -50,20 +50,81 @@
 
     <!-- Settings Panel -->
     <div id="settingsPanel" style="display: none;">
-        <h3>Settings</h3>
-        <label>
-            <input type="checkbox" id="toggleWorkers" onchange="toggleWorkers()">
-            Enable Web Workers (Experimental)
-        </label>
+        <h3>⚙️ Settings</h3>
         
-        <!-- NEW: Render Distance Slider -->
+        <!-- Workers Toggle -->
+        <div class="setting-item">
+            <label>
+                <input type="checkbox" id="toggleWorkers" onchange="toggleWorkers()">
+                Enable Web Workers (Experimental)
+            </label>
+        </div>
+        
+        <!-- Render Distance -->
         <div class="setting-item">
             <label for="renderDistanceSlider">Render Distance: <span id="renderDistanceValue">4</span> chunks</label>
             <input type="range" id="renderDistanceSlider" min="1" max="20" value="4" onchange="updateRenderDistance(this.value)">
             <small id="renderDistanceWarning" style="color: #ff9800; display: none;">⚠️ High values may impact performance</small>
         </div>
         
-        <button onclick="toggleSettings()">Close</button>
+        <!-- DEBUG SECTION -->
+        <h4 style="margin-top: 20px; color: #4CAF50;">🐛 Debug Options</h4>
+        
+        <!-- Debug Logging -->
+        <div class="setting-item">
+            <label>
+                <input type="checkbox" id="toggleDebugLogging" onchange="toggleDebugLogging()">
+                Enable Debug Logging
+            </label>
+            <small style="display: block; margin-left: 24px; color: #888;">Shows detailed console logs</small>
+        </div>
+        
+        <!-- Log Level -->
+        <div class="setting-item" id="logLevelContainer" style="display: none;">
+            <label for="logLevelSelect">Log Level:</label>
+            <select id="logLevelSelect" onchange="updateLogLevel(this.value)" style="width: 100%; padding: 5px; background: #333; color: white; border: 1px solid #555;">
+                <option value="ERROR">Error Only</option>
+                <option value="WARN">Warnings</option>
+                <option value="INFO">Info</option>
+                <option value="DEBUG">Debug</option>
+                <option value="VERBOSE">Verbose (All)</option>
+            </select>
+        </div>
+        
+        <!-- Performance Metrics -->
+        <div class="setting-item">
+            <label>
+                <input type="checkbox" id="togglePerfMetrics" onchange="togglePerfMetrics()">
+                Show Performance Metrics
+            </label>
+            <small style="display: block; margin-left: 24px; color: #888;">Displays timing information</small>
+        </div>
+        
+        <!-- MEMORY MANAGEMENT -->
+        <h4 style="margin-top: 20px; color: #FF9800;">💾 Memory Management</h4>
+        
+        <!-- Memory Stats -->
+        <div class="setting-item">
+            <div id="memoryStats" style="font-family: monospace; font-size: 12px; color: #aaa;">
+                Loading memory stats...
+            </div>
+        </div>
+        
+        <!-- Clear Memory -->
+        <div class="setting-item">
+            <button onclick="clearMemory()" style="background: #f44336; width: 100%;">
+                🗑️ Clear Memory Cache
+            </button>
+        </div>
+        
+        <!-- Export Debug Logs -->
+        <div class="setting-item">
+            <button onclick="exportDebugLogs()" style="background: #2196F3; width: 100%;">
+                📥 Export Debug Logs
+            </button>
+        </div>
+        
+        <button onclick="toggleSettings()" style="margin-top: 20px;">Close</button>
     </div>
 
     <!-- Settings Button -->
@@ -74,28 +135,129 @@
     
     <!-- Settings Script -->
     <script>
+        // Settings panel toggle
         function toggleSettings() {
             const panel = document.getElementById('settingsPanel');
             panel.style.display = panel.style.display === 'none' ? 'block' : 'none';
+            
+            // Update memory stats when opening
+            if (panel.style.display === 'block') {
+                updateMemoryStats();
+            }
         }
         
+        // Workers toggle
         function toggleWorkers() {
             const checkbox = document.getElementById('toggleWorkers');
-            // This will be handled by the game code
             window.dispatchEvent(new CustomEvent('toggleWorkers', { detail: checkbox.checked }));
         }
         
+        // Render distance update
         function updateRenderDistance(value) {
             const intValue = parseInt(value);
             document.getElementById('renderDistanceValue').textContent = intValue;
             
-            // Show warning for high values
             const warning = document.getElementById('renderDistanceWarning');
             warning.style.display = intValue > 10 ? 'block' : 'none';
             
-            // Dispatch event to game
             window.dispatchEvent(new CustomEvent('updateRenderDistance', { detail: intValue }));
         }
+        
+        // DEBUG LOGGING CONTROLS
+        function toggleDebugLogging() {
+            const checkbox = document.getElementById('toggleDebugLogging');
+            const logLevelContainer = document.getElementById('logLevelContainer');
+            
+            if (window.Logger) {
+                window.Logger.setEnabled(checkbox.checked);
+                logLevelContainer.style.display = checkbox.checked ? 'block' : 'none';
+                
+                if (checkbox.checked) {
+                    console.log('%c🐛 Debug Logging Enabled', 'color: #4CAF50; font-weight: bold;');
+                } else {
+                    console.log('%c🔇 Debug Logging Disabled', 'color: #f44336; font-weight: bold;');
+                }
+            }
+        }
+        
+        function updateLogLevel(level) {
+            if (window.Logger) {
+                window.Logger.setLevel(level);
+                console.log(`%c📊 Log Level: ${level}`, 'color: #2196F3; font-weight: bold;');
+            }
+        }
+        
+        function togglePerfMetrics() {
+            const checkbox = document.getElementById('togglePerfMetrics');
+            if (window.Logger) {
+                window.Logger.configure({ performanceMetrics: checkbox.checked });
+                console.log(`%c⚡ Performance Metrics: ${checkbox.checked ? 'ON' : 'OFF'}`, 'color: #FF9800; font-weight: bold;');
+            }
+        }
+        
+        // MEMORY MANAGEMENT
+        function updateMemoryStats() {
+            const statsDiv = document.getElementById('memoryStats');
+            
+            if (window.world && window.world.memoryManager) {
+                const stats = window.world.memoryManager.getStats();
+                statsDiv.innerHTML = `
+                    <div>Chunks: ${stats.chunks}</div>
+                    <div>Memory: ${stats.memoryPressure}</div>
+                    <div>Pooled Geo: ${stats.pooledGeometries}</div>
+                    <div>Pooled Mat: ${stats.pooledMaterials}</div>
+                    <div>Cleanups: ${stats.cleanups}</div>
+                `;
+            } else if (performance.memory) {
+                const used = (performance.memory.usedJSHeapSize / 1048576).toFixed(1);
+                const total = (performance.memory.jsHeapSizeLimit / 1048576).toFixed(1);
+                statsDiv.innerHTML = `
+                    <div>Memory: ${used}MB / ${total}MB</div>
+                    <div>Usage: ${(used/total*100).toFixed(1)}%</div>
+                `;
+            } else {
+                statsDiv.innerHTML = 'Memory stats not available';
+            }
+        }
+        
+        function clearMemory() {
+            if (confirm('This will clear all cached data and may cause temporary lag. Continue?')) {
+                if (window.world && window.world.memoryManager) {
+                    window.world.memoryManager.performAggressiveCleanup();
+                }
+                
+                // Force garbage collection if available
+                if (typeof gc !== 'undefined') {
+                    gc();
+                }
+                
+                console.log('%c🗑️ Memory cache cleared', 'color: #f44336; font-weight: bold;');
+                updateMemoryStats();
+            }
+        }
+        
+        function exportDebugLogs() {
+            if (window.Logger) {
+                const logs = window.Logger.exportLogs();
+                const blob = new Blob([logs], { type: 'application/json' });
+                const url = URL.createObjectURL(blob);
+                const a = document.createElement('a');
+                a.href = url;
+                a.download = `minecraft-debug-${Date.now()}.json`;
+                a.click();
+                URL.revokeObjectURL(url);
+                
+                console.log('%c📥 Debug logs exported', 'color: #2196F3; font-weight: bold;');
+            }
+        }
+        
+        // Update memory stats periodically
+        setInterval(() => {
+            const panel = document.getElementById('settingsPanel');
+            if (panel && panel.style.display !== 'none') {
+                updateMemoryStats();
+            }
+        }, 2000);
         
         // Update worker status display
         setInterval(() => {
@@ -118,23 +280,35 @@
             }
         }, 100);
         
-        // Initialize checkbox state
+        // Initialize settings on load
         window.addEventListener('load', () => {
             const checkbox = document.getElementById('toggleWorkers');
             const slider = document.getElementById('renderDistanceSlider');
+            const debugCheckbox = document.getElementById('toggleDebugLogging');
             
-            if (checkbox) {
-                // Set initial state from config if available
-                setTimeout(() => {
-                    if (window.config && window.config.features) {
-                        checkbox.checked = window.config.features.useWorkers;
-                    }
-                    if (window.config && slider) {
-                        slider.value = window.config.renderDistance;
-                        document.getElementById('renderDistanceValue').textContent = window.config.renderDistance;
-                    }
-                }, 500);
-            }
+            setTimeout(() => {
+                // Initialize worker checkbox
+                if (checkbox && window.config && window.config.features) {
+                    checkbox.checked = window.config.features.useWorkers;
+                }
+                
+                // Initialize render distance
+                if (window.config && slider) {
+                    slider.value = window.config.renderDistance;
+                    document.getElementById('renderDistanceValue').textContent = window.config.renderDistance;
+                }
+                
+                // Initialize debug logging (off by default)
+                if (debugCheckbox && window.Logger) {
+                    debugCheckbox.checked = false;
+                    window.Logger.setEnabled(false);
+                }
+                
+                // Make world accessible for memory management
+                if (window.world) {
+                    window.world = window.world;
+                }
+            }, 500);
         });
     </script>
 </body>
