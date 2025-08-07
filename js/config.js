@@ -1,8 +1,8 @@
-// Game configuration - OPTIMIZADO PARA TERRENO 3D
+// Game configuration - OPTIMIZADO PARA CARGA RÁPIDA DE CHUNKS
 export const config = {
     // World settings
     chunkSize: 16,
-    renderDistance: 4,  // This will be dynamically updatable
+    renderDistance: 4,  // Default conservador, ajustable dinámicamente
     blockSize: 1,
     
     // Vertical chunk system
@@ -21,35 +21,76 @@ export const config = {
     
     // Features - OPTIMIZADO PARA MEJOR RENDIMIENTO
     features: {
-        useWorkers: true,         // ACTIVADO - Genera terreno 3D con DensityGenerator
-        workerCount: 4,          // Increased worker count for better performance
-        fallbackToSync: true,    // Always have fallback
-        debugWorkers: false,     // Reducir logs para mejor rendimiento
-        useAdvancedLoader: false // DESACTIVADO - Sistema experimental con problemas
+        useWorkers: true,         // Genera terreno 3D con DensityGenerator
+        workerCount: 4,          // Workers para generación paralela
+        fallbackToSync: true,    // Fallback si workers fallan
+        debugWorkers: false,     // Sin logs para mejor rendimiento
+        useAdvancedLoader: false // Sistema experimental desactivado
     },
     
-    // Performance settings
+    // Performance settings - CRÍTICO PARA CARGA RÁPIDA
     performance: {
-        maxChunksPerFrame: 5,    // Maximum chunks to process per frame
-        predictiveDistance: 3,    // Chunks to predict ahead based on movement
-        chunkLoadDelay: 50,      // Milliseconds between chunk loads
-        priorityLoadRadius: 2,   // High priority loading radius
-        expandedViewFactor: 1.5  // Frustum expansion for predictive loading
+        // Carga adaptativa basada en FPS
+        maxChunksPerFrame: {
+            high: 8,    // FPS > 50
+            medium: 5,  // FPS > 30
+            low: 3      // FPS < 30
+        },
+        
+        // Intervalos de actualización
+        chunkUpdateInterval: 50,     // ms entre actualizaciones de chunks
+        frustumUpdateInterval: 100,  // ms entre actualizaciones de frustum
+        
+        // Priorización
+        priorityRadius: 2,           // Radio de máxima prioridad
+        viewAnglePriority: 0.8,      // Factor de prioridad para chunks al frente
+        
+        // Límites de memoria
+        maxLoadedChunks: 200,        // Máximo de chunks en memoria
+        maxConcurrentLoads: 8,       // Máximo de chunks cargando simultáneamente
+        
+        // Optimizaciones
+        enableFrustumCulling: true,  // Culling de chunks no visibles
+        enableDistanceFog: true,     // Niebla para ocultar bordes
+        enableLOD: false,            // LOD desactivado por ahora
+        
+        // Cache
+        cacheLifetime: 5000,         // ms que un chunk permanece en cache
+        enableChunkCache: true       // Cache de chunks descargados
     }
 };
 
-// NEW: Function to update render distance
+// Función para actualizar distancia de renderizado dinámicamente
 export function updateRenderDistance(newDistance) {
-    // Validate input
     const distance = Math.max(1, Math.min(20, parseInt(newDistance)));
     config.renderDistance = distance;
     
-    // Adjust performance settings based on render distance
-    config.performance.maxChunksPerFrame = Math.max(3, Math.min(10, Math.floor(distance / 2)));
-    config.performance.predictiveDistance = Math.max(2, Math.min(5, Math.floor(distance / 3)));
+    // Ajustar configuración de rendimiento basada en distancia
+    if (distance <= 4) {
+        // Configuración para distancia corta (máximo rendimiento)
+        config.performance.maxChunksPerFrame.high = 8;
+        config.performance.maxChunksPerFrame.medium = 5;
+        config.performance.maxChunksPerFrame.low = 3;
+        config.performance.chunkUpdateInterval = 50;
+    } else if (distance <= 8) {
+        // Configuración para distancia media
+        config.performance.maxChunksPerFrame.high = 6;
+        config.performance.maxChunksPerFrame.medium = 4;
+        config.performance.maxChunksPerFrame.low = 2;
+        config.performance.chunkUpdateInterval = 75;
+    } else {
+        // Configuración para distancia larga (conservador)
+        config.performance.maxChunksPerFrame.high = 4;
+        config.performance.maxChunksPerFrame.medium = 3;
+        config.performance.maxChunksPerFrame.low = 1;
+        config.performance.chunkUpdateInterval = 100;
+    }
+    
+    // Ajustar límite de chunks basado en distancia
+    config.performance.maxLoadedChunks = Math.min(500, (distance * 2 + 1) * (distance * 2 + 1) * 2);
     
     Logger.info('[Config] Render distance updated to:', distance);
-    Logger.debug('[Config] Performance settings adjusted:', config.performance);
+    Logger.debug('[Config] Performance adjusted for distance:', config.performance);
     return distance;
 }
 
@@ -61,9 +102,9 @@ export const BlockType = {
     STONE: 3
 };
 
-// Block colors - Mejorados para mejor visualización
+// Block colors - Colores vibrantes para mejor visualización
 export const blockColors = {
-    [BlockType.GRASS]: 0x4CAF50,  // Verde vibrante
+    [BlockType.GRASS]: 0x4CAF50,  // Verde césped
     [BlockType.DIRT]: 0x8D6E63,   // Marrón tierra
     [BlockType.STONE]: 0x9E9E9E   // Gris piedra
 };
@@ -79,24 +120,30 @@ export const stats = {
     cullingEfficiency: 0,
     workerStatus: 'initializing',
     chunksInQueue: 0,
-    chunksProcessing: 0
+    chunksProcessing: 0,
+    averageLoadTime: 0,
+    memoryUsage: 0
 };
 
-// Import Logger if available
+// Sistema de Logger
 let Logger = {
-    info: console.log,
-    debug: () => {},
-    warn: console.warn,
-    error: console.error
+    info: (...args) => console.log(...args),
+    debug: () => {},  // Desactivado por defecto
+    warn: (...args) => console.warn(...args),
+    error: (...args) => console.error(...args),
+    verbose: () => {} // Desactivado por defecto
 };
 
-// Try to import the actual Logger
+// Intentar importar el Logger real
 try {
     import('./utils/Logger.js').then(module => {
         Logger = module.Logger;
     }).catch(() => {
-        // Logger not available, use console
+        // Logger no disponible, usar fallback
     });
 } catch (e) {
-    // Import not supported in this context
+    // Import no soportado en este contexto
 }
+
+// Exportar Logger para uso global
+export { Logger };
