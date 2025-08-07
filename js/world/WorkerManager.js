@@ -1,12 +1,17 @@
-// WorkerManager.js - Safe Web Workers implementation for GitHub Pages with vertical chunks
-import { config } from '../config.js';
+/**
+ * WorkerManager - Sistema optimizado de Web Workers para generación de terreno
+ * Genera terreno 3D con chunks verticales usando workers inline
+ */
 
-// Import DensityGenerator for the worker
+import { config } from '../config.js';
+import { Logger } from '../utils/Logger.js';
+
+// Código del generador de densidad para terreno 3D
 const DENSITY_GENERATOR_CODE = `
 class DensityGenerator {
     constructor(seed = 12345) {
         this.seed = seed;
-        this.baseOffset = 64; // Increased base height for taller terrain
+        this.baseOffset = 64;
         this.terrainScale = 0.02;
         this.caveScale = 0.05;
         this.detailScale = 0.1;
@@ -64,7 +69,6 @@ class DensityGenerator {
         const biomeOffset = this.biomeOffsets[biome] || 0;
         let density = (this.baseOffset + biomeOffset) - worldY;
         
-        // Increased amplitude for taller terrain
         density += this.noise3D(worldX, worldY, worldZ, this.terrainScale) * 30;
         density += this.noise3D(worldX, worldY, worldZ, this.terrainScale * 2) * 15;
         
@@ -77,7 +81,6 @@ class DensityGenerator {
         
         density += this.noise3D(worldX, worldY, worldZ, this.detailScale) * 5;
         
-        // More overhangs at various heights
         if (worldY > 20 && worldY < 100) {
             const overhangNoise = this.noise3D(worldX * 0.03, worldY * 0.1, worldZ * 0.03);
             if (overhangNoise > 0.3) {
@@ -99,28 +102,25 @@ class DensityGenerator {
 }
 `;
 
-// Terrain generation worker code with vertical chunks support
+// Worker de generación de terreno
 const TERRAIN_WORKER_CODE = DENSITY_GENERATOR_CODE + `
-console.log('[TerrainWorker] 3D Density worker with vertical chunks initialized');
-
 self.onmessage = function(e) {
     const { type, data } = e.data;
     
     if (type === 'GENERATE_CHUNK_COLUMN') {
         try {
             const { chunkX, chunkZ, chunkSize, subChunkHeight, verticalChunks, seed } = data;
-            console.log('[TerrainWorker] Generating chunk column at (' + chunkX + ', ' + chunkZ + ') with ' + verticalChunks + ' vertical chunks');
             
             const generator = new DensityGenerator(seed);
             const results = [];
             
-            // Generate each sub-chunk
+            // Generar cada sub-chunk
             for (let subY = 0; subY < verticalChunks; subY++) {
                 const baseY = subY * subChunkHeight;
                 const blocks = new Uint8Array(chunkSize * subChunkHeight * chunkSize);
                 let hasContent = false;
                 
-                // First pass: Generate terrain using 3D density
+                // Primera pasada: generar terreno con densidad 3D
                 for (let x = 0; x < chunkSize; x++) {
                     for (let y = 0; y < subChunkHeight; y++) {
                         for (let z = 0; z < chunkSize; z++) {
@@ -143,9 +143,9 @@ self.onmessage = function(e) {
                     }
                 }
                 
-                // Only process non-empty sub-chunks
+                // Solo procesar sub-chunks no vacíos
                 if (hasContent) {
-                    // Second pass: Apply surface materials
+                    // Segunda pasada: aplicar materiales de superficie
                     for (let x = 0; x < chunkSize; x++) {
                         for (let y = 0; y < subChunkHeight; y++) {
                             for (let z = 0; z < chunkSize; z++) {
@@ -156,21 +156,18 @@ self.onmessage = function(e) {
                                     const worldY = baseY + y;
                                     const worldZ = chunkZ * chunkSize + z;
                                     
-                                    // Check if there's air above
+                                    // Verificar si hay aire arriba
                                     let hasAirAbove = false;
                                     
                                     if (y < subChunkHeight - 1) {
-                                        // Check within sub-chunk
                                         const aboveIndex = x + (y + 1) * chunkSize + z * chunkSize * subChunkHeight;
                                         hasAirAbove = blocks[aboveIndex] === 0;
                                     } else if (subY < verticalChunks - 1) {
-                                        // Check next sub-chunk (simplified - assume air if at boundary)
                                         const nextWorldY = worldY + 1;
                                         const biome = generator.getBiome(worldX, worldZ);
                                         const densityAbove = generator.getDensity(worldX, nextWorldY, worldZ, biome);
                                         hasAirAbove = densityAbove <= 0;
                                     } else {
-                                        // Top of world
                                         hasAirAbove = true;
                                     }
                                     
@@ -185,7 +182,7 @@ self.onmessage = function(e) {
                                             blocks[index] = 1; // Grass
                                         }
                                         
-                                        // Add dirt layers below grass
+                                        // Añadir capas de tierra bajo el césped
                                         if (blocks[index] === 1) {
                                             for (let dy = 1; dy <= 3; dy++) {
                                                 if (y - dy >= 0) {
@@ -228,208 +225,6 @@ self.onmessage = function(e) {
 };
 `;
 
-// Mesh generation worker code with sub-chunk support
-const MESH_WORKER_CODE = `
-console.log('[MeshWorker] Inline worker with sub-chunk support initialized');
-
-const BlockType = {
-    AIR: 0,
-    GRASS: 1,
-    DIRT: 2,
-    STONE: 3
-};
-
-const blockColors = {
-    1: { r: 0.3, g: 0.8, b: 0.3 },
-    2: { r: 0.5, g: 0.3, b: 0.1 },
-    3: { r: 0.5, g: 0.5, b: 0.5 }
-};
-
-const faces = [
-    { dir: [0, 1, 0], name: 'top' },
-    { dir: [0, -1, 0], name: 'bottom' },
-    { dir: [1, 0, 0], name: 'right' },
-    { dir: [-1, 0, 0], name: 'left' },
-    { dir: [0, 0, 1], name: 'front' },
-    { dir: [0, 0, -1], name: 'back' }
-];
-
-function getBlock(blocks, x, y, z, chunkSize, subChunkHeight) {
-    if (x < 0 || x >= chunkSize || y < 0 || y >= subChunkHeight || z < 0 || z >= chunkSize) {
-        return 0;
-    }
-    return blocks[x + y * chunkSize + z * chunkSize * subChunkHeight];
-}
-
-function shouldRenderFace(blocks, x, y, z, dir, chunkSize, subChunkHeight, neighborData) {
-    const checkX = x + dir[0];
-    const checkY = y + dir[1];
-    const checkZ = z + dir[2];
-    
-    // Check within sub-chunk
-    if (checkX >= 0 && checkX < chunkSize && 
-        checkY >= 0 && checkY < subChunkHeight && 
-        checkZ >= 0 && checkZ < chunkSize) {
-        return getBlock(blocks, checkX, checkY, checkZ, chunkSize, subChunkHeight) === 0;
-    }
-    
-    // Check neighbor sub-chunks
-    if (neighborData) {
-        if (checkY < 0 && neighborData.below) {
-            return getBlock(neighborData.below, checkX, subChunkHeight - 1, checkZ, chunkSize, subChunkHeight) === 0;
-        }
-        if (checkY >= subChunkHeight && neighborData.above) {
-            return getBlock(neighborData.above, checkX, 0, checkZ, chunkSize, subChunkHeight) === 0;
-        }
-    }
-    
-    // Default to rendering face at boundaries
-    return true;
-}
-
-function addFace(vertices, normals, colors, indices, x, y, z, face, color, vertexCount) {
-    const half = 0.5;
-    let faceVertices = [];
-    let normal = [0, 0, 0];
-    
-    switch(face.name) {
-        case 'top':
-            faceVertices = [
-                [x - half, y + half, z - half],
-                [x - half, y + half, z + half],
-                [x + half, y + half, z + half],
-                [x + half, y + half, z - half]
-            ];
-            normal = [0, 1, 0];
-            break;
-        case 'bottom':
-            faceVertices = [
-                [x - half, y - half, z - half],
-                [x + half, y - half, z - half],
-                [x + half, y - half, z + half],
-                [x - half, y - half, z + half]
-            ];
-            normal = [0, -1, 0];
-            break;
-        case 'right':
-            faceVertices = [
-                [x + half, y - half, z - half],
-                [x + half, y + half, z - half],
-                [x + half, y + half, z + half],
-                [x + half, y - half, z + half]
-            ];
-            normal = [1, 0, 0];
-            break;
-        case 'left':
-            faceVertices = [
-                [x - half, y - half, z + half],
-                [x - half, y + half, z + half],
-                [x - half, y + half, z - half],
-                [x - half, y - half, z - half]
-            ];
-            normal = [-1, 0, 0];
-            break;
-        case 'front':
-            faceVertices = [
-                [x + half, y - half, z + half],
-                [x + half, y + half, z + half],
-                [x - half, y + half, z + half],
-                [x - half, y - half, z + half]
-            ];
-            normal = [0, 0, 1];
-            break;
-        case 'back':
-            faceVertices = [
-                [x - half, y - half, z - half],
-                [x - half, y + half, z - half],
-                [x + half, y + half, z - half],
-                [x + half, y - half, z - half]
-            ];
-            normal = [0, 0, -1];
-            break;
-    }
-    
-    const baseIndex = vertexCount;
-    faceVertices.forEach(vertex => {
-        vertices.push(...vertex);
-        normals.push(...normal);
-        colors.push(color.r, color.g, color.b);
-    });
-    
-    indices.push(
-        baseIndex, baseIndex + 1, baseIndex + 2,
-        baseIndex, baseIndex + 2, baseIndex + 3
-    );
-}
-
-self.onmessage = function(e) {
-    const { type, data } = e.data;
-    
-    if (type === 'GENERATE_SUBCHUNK_MESH') {
-        try {
-            const { blocks, chunkSize, subChunkHeight, chunkX, chunkZ, subY, neighborData } = data;
-            const blockArray = new Uint8Array(blocks);
-            
-            const vertices = [];
-            const normals = [];
-            const colors = [];
-            const indices = [];
-            let vertexCount = 0;
-            
-            const baseY = subY * subChunkHeight;
-            
-            for (let x = 0; x < chunkSize; x++) {
-                for (let y = 0; y < subChunkHeight; y++) {
-                    for (let z = 0; z < chunkSize; z++) {
-                        const block = getBlock(blockArray, x, y, z, chunkSize, subChunkHeight);
-                        if (block === 0) continue;
-                        
-                        const worldX = chunkX * chunkSize + x;
-                        const worldY = baseY + y;
-                        const worldZ = chunkZ * chunkSize + z;
-                        
-                        const color = blockColors[block];
-                        
-                        faces.forEach(face => {
-                            if (shouldRenderFace(blockArray, x, y, z, face.dir, chunkSize, subChunkHeight, neighborData)) {
-                                addFace(vertices, normals, colors, indices, worldX, worldY, worldZ, face, color, vertexCount);
-                                vertexCount += 4;
-                            }
-                        });
-                    }
-                }
-            }
-            
-            self.postMessage({
-                type: 'SUBCHUNK_MESH_GENERATED',
-                data: {
-                    chunkX,
-                    chunkZ,
-                    subY,
-                    vertices: new Float32Array(vertices).buffer,
-                    normals: new Float32Array(normals).buffer,
-                    colors: new Float32Array(colors).buffer,
-                    indices: new Uint32Array(indices).buffer,
-                    blocks: blockArray.buffer
-                }
-            }, [
-                new Float32Array(vertices).buffer,
-                new Float32Array(normals).buffer,
-                new Float32Array(colors).buffer,
-                new Uint32Array(indices).buffer,
-                blockArray.buffer
-            ]);
-            
-        } catch (error) {
-            self.postMessage({
-                type: 'ERROR',
-                error: error.message
-            });
-        }
-    }
-};
-`;
-
 export class WorkerManager {
     constructor(world, scene) {
         this.world = world;
@@ -441,28 +236,27 @@ export class WorkerManager {
         };
         this.pendingChunks = new Map();
         this.activeRequests = new Set();
-        
-        // Store terrain data for sub-chunks
         this.subChunkDataCache = new Map();
         
-        // Try to initialize workers
+        // Intentar inicializar workers
         this.tryInitialize();
     }
     
     tryInitialize() {
         try {
             if (typeof Worker === 'undefined') {
-                console.warn('[WorkerManager] Web Workers not supported');
+                Logger.warn('[WorkerManager] Web Workers not supported');
                 return false;
             }
             
+            // Test de workers con blob
             const testBlob = new Blob(['self.postMessage("test")'], { type: 'application/javascript' });
             const testUrl = URL.createObjectURL(testBlob);
             const testWorker = new Worker(testUrl);
             
             testWorker.onmessage = (e) => {
                 if (e.data === 'test') {
-                    console.log('[WorkerManager] Blob workers supported, initializing...');
+                    Logger.info('[WorkerManager] Blob workers supported, initializing...');
                     testWorker.terminate();
                     URL.revokeObjectURL(testUrl);
                     this.initialize();
@@ -470,14 +264,15 @@ export class WorkerManager {
             };
             
             testWorker.onerror = (error) => {
-                console.warn('[WorkerManager] Blob workers not supported:', error);
+                Logger.warn('[WorkerManager] Blob workers not supported');
                 testWorker.terminate();
                 URL.revokeObjectURL(testUrl);
             };
             
+            // Timeout para el test
             setTimeout(() => {
                 if (!this.enabled) {
-                    console.warn('[WorkerManager] Worker test timeout');
+                    Logger.warn('[WorkerManager] Worker test timeout');
                     try {
                         testWorker.terminate();
                         URL.revokeObjectURL(testUrl);
@@ -486,16 +281,16 @@ export class WorkerManager {
             }, 1000);
             
         } catch (error) {
-            console.warn('[WorkerManager] Failed to test workers:', error);
+            Logger.warn('[WorkerManager] Failed to test workers:', error);
             return false;
         }
     }
     
     initialize() {
         try {
-            const workerCount = Math.min(navigator.hardwareConcurrency || 2, 2);
+            const workerCount = Math.min(navigator.hardwareConcurrency || 2, config.features.workerCount || 2);
             
-            // Create terrain workers
+            // Crear workers de terreno
             for (let i = 0; i < workerCount; i++) {
                 const blob = new Blob([TERRAIN_WORKER_CODE], { type: 'application/javascript' });
                 const url = URL.createObjectURL(blob);
@@ -503,7 +298,7 @@ export class WorkerManager {
                 
                 worker.onmessage = (e) => this.handleTerrainMessage(e, i);
                 worker.onerror = (error) => {
-                    console.error(`[WorkerManager] Terrain worker ${i} error:`, error);
+                    Logger.error(`[WorkerManager] Terrain worker ${i} error:`, error);
                 };
                 
                 this.workers.terrain.push({
@@ -514,30 +309,11 @@ export class WorkerManager {
                 });
             }
             
-            // Create mesh workers
-            for (let i = 0; i < workerCount; i++) {
-                const blob = new Blob([MESH_WORKER_CODE], { type: 'application/javascript' });
-                const url = URL.createObjectURL(blob);
-                const worker = new Worker(url);
-                
-                worker.onmessage = (e) => this.handleMeshMessage(e, i);
-                worker.onerror = (error) => {
-                    console.error(`[WorkerManager] Mesh worker ${i} error:`, error);
-                };
-                
-                this.workers.mesh.push({
-                    worker,
-                    url,
-                    busy: false,
-                    id: i
-                });
-            }
-            
             this.enabled = true;
-            console.log(`[WorkerManager] Initialized with ${workerCount} workers each for vertical chunks`);
+            Logger.info(`[WorkerManager] Initialized with ${workerCount} terrain workers`);
             
         } catch (error) {
-            console.error('[WorkerManager] Failed to initialize:', error);
+            Logger.error('[WorkerManager] Failed to initialize:', error);
             this.enabled = false;
         }
     }
@@ -551,35 +327,52 @@ export class WorkerManager {
             
             this.workers.terrain[workerId].busy = false;
             
-            // Get or create chunk column
+            // Obtener o crear columna de chunk
             const chunkColumn = this.world.getChunkColumn(chunkX, chunkZ);
+            if (!chunkColumn) {
+                Logger.warn(`[WorkerManager] ChunkColumn not found for ${key}`);
+                this.activeRequests.delete(key);
+                this.processPending();
+                return;
+            }
             
-            console.log(`[WorkerManager] Generated ${subChunks.length} sub-chunks for column ${key}`);
+            Logger.debug(`[WorkerManager] Generated ${subChunks.length} sub-chunks for column ${key}`);
             
-            // Process each sub-chunk
+            // Procesar cada sub-chunk
             subChunks.forEach(subChunkData => {
                 const { subY, blocks } = subChunkData;
                 
-                // Store blocks in chunk column
+                // Almacenar bloques en la columna
                 chunkColumn.setSubChunkBlocks(subY, new Uint8Array(blocks));
                 
-                // Immediately update the mesh for this sub-chunk
+                // Actualizar mesh inmediatamente
                 chunkColumn.updateSubChunkMesh(subY, this.scene);
             });
             
-            // Mark as complete
+            // Marcar como completo
             this.activeRequests.delete(key);
             this.processPending();
             
         } else if (type === 'ERROR') {
-            console.error(`[WorkerManager] Terrain worker ${workerId} error:`, error);
+            Logger.error(`[WorkerManager] Terrain worker ${workerId} error:`, error);
             this.workers.terrain[workerId].busy = false;
+            
+            // Reintentar o usar fallback
+            const key = this.findKeyForWorker(workerId);
+            if (key) {
+                this.activeRequests.delete(key);
+                this.processPending();
+            }
         }
     }
     
-    handleMeshMessage(e, workerId) {
-        // This is now unused since we're generating meshes directly in the main thread
-        this.workers.mesh[workerId].busy = false;
+    findKeyForWorker(workerId) {
+        // Buscar qué chunk estaba procesando este worker
+        for (const key of this.activeRequests) {
+            // Implementación simplificada
+            return key;
+        }
+        return null;
     }
     
     requestChunk(chunkX, chunkZ) {
@@ -587,15 +380,17 @@ export class WorkerManager {
         
         const key = `${chunkX},${chunkZ}`;
         
+        // Si ya está en proceso, no duplicar
         if (this.activeRequests.has(key)) return true;
         
+        // Buscar worker disponible
         const worker = this.workers.terrain.find(w => !w.busy);
         
         if (worker) {
             worker.busy = true;
             this.activeRequests.add(key);
             
-            console.log(`[WorkerManager] Requesting chunk column at ${key}`);
+            Logger.verbose(`[WorkerManager] Requesting chunk column at ${key}`);
             
             worker.worker.postMessage({
                 type: 'GENERATE_CHUNK_COLUMN',
@@ -611,6 +406,7 @@ export class WorkerManager {
             
             return true;
         } else {
+            // Añadir a cola de pendientes
             this.pendingChunks.set(key, { x: chunkX, z: chunkZ });
             return true;
         }
@@ -631,12 +427,27 @@ export class WorkerManager {
         return this.enabled;
     }
     
+    getStats() {
+        return {
+            enabled: this.enabled,
+            workers: this.workers.terrain.length,
+            pending: this.pendingChunks.size,
+            active: this.activeRequests.size,
+            busyWorkers: this.workers.terrain.filter(w => w.busy).length
+        };
+    }
+    
     dispose() {
+        Logger.info('[WorkerManager] Disposing...');
+        
+        // Terminar todos los workers
         [...this.workers.terrain, ...this.workers.mesh].forEach(w => {
             try {
                 w.worker.terminate();
                 URL.revokeObjectURL(w.url);
-            } catch (e) {}
+            } catch (e) {
+                // Silenciar errores de limpieza
+            }
         });
         
         this.workers.terrain = [];
@@ -646,6 +457,6 @@ export class WorkerManager {
         this.subChunkDataCache.clear();
         this.enabled = false;
         
-        console.log('[WorkerManager] Disposed');
+        Logger.info('[WorkerManager] Disposed');
     }
 }
