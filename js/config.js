@@ -1,4 +1,4 @@
-// Game configuration
+// Game configuration - OPTIMIZADO PARA TERRENO 3D
 export const config = {
     // World settings
     chunkSize: 16,
@@ -19,13 +19,13 @@ export const config = {
     mouseSensitivity: 0.002,
     mobileMoveSensitivity: 0.5,
     
-    // Features (safe defaults for GitHub Pages)
+    // Features - OPTIMIZADO PARA MEJOR RENDIMIENTO
     features: {
-        useWorkers: false,        // Disabled by default for safety
+        useWorkers: true,         // ACTIVADO - Genera terreno 3D con DensityGenerator
         workerCount: 4,          // Increased worker count for better performance
         fallbackToSync: true,    // Always have fallback
-        debugWorkers: true,      // Extra logging for workers
-        useAdvancedLoader: false // DISABLED - Fix for rendering issue
+        debugWorkers: false,     // Reducir logs para mejor rendimiento
+        useAdvancedLoader: false // DESACTIVADO - Sistema experimental con problemas
     },
     
     // Performance settings
@@ -48,8 +48,8 @@ export function updateRenderDistance(newDistance) {
     config.performance.maxChunksPerFrame = Math.max(3, Math.min(10, Math.floor(distance / 2)));
     config.performance.predictiveDistance = Math.max(2, Math.min(5, Math.floor(distance / 3)));
     
-    console.log('[Config] Render distance updated to:', distance);
-    console.log('[Config] Performance settings adjusted:', config.performance);
+    Logger.info('[Config] Render distance updated to:', distance);
+    Logger.debug('[Config] Performance settings adjusted:', config.performance);
     return distance;
 }
 
@@ -61,11 +61,11 @@ export const BlockType = {
     STONE: 3
 };
 
-// Block colors
+// Block colors - Mejorados para mejor visualización
 export const blockColors = {
-    [BlockType.GRASS]: 0x4CAF50,
-    [BlockType.DIRT]: 0x8D6E63,
-    [BlockType.STONE]: 0x9E9E9E
+    [BlockType.GRASS]: 0x4CAF50,  // Verde vibrante
+    [BlockType.DIRT]: 0x8D6E63,   // Marrón tierra
+    [BlockType.STONE]: 0x9E9E9E   // Gris piedra
 };
 
 // Performance stats
@@ -75,7 +75,28 @@ export const stats = {
     totalFaces: 0,
     visibleChunks: 0,
     totalChunks: 0,
-    workerStatus: 'disabled',
+    culledChunks: 0,
+    cullingEfficiency: 0,
+    workerStatus: 'initializing',
     chunksInQueue: 0,
     chunksProcessing: 0
 };
+
+// Import Logger if available
+let Logger = {
+    info: console.log,
+    debug: () => {},
+    warn: console.warn,
+    error: console.error
+};
+
+// Try to import the actual Logger
+try {
+    import('./utils/Logger.js').then(module => {
+        Logger = module.Logger;
+    }).catch(() => {
+        // Logger not available, use console
+    });
+} catch (e) {
+    // Import not supported in this context
+}
