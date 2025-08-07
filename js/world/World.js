@@ -2,6 +2,7 @@ import { config, stats } from '../config.js';
 import { ChunkColumn } from './ChunkColumn.js';
 import { WorkerManager } from './WorkerManager.js';
 import { MemoryManager } from './MemoryManager.js';
+import { OptimizedRenderer } from './OptimizedRenderer.js';
 import { Logger } from '../utils/Logger.js';
 
 // Sistema de Frustum Culling mejorado con priorización
@@ -154,7 +155,7 @@ class ChunkPrioritySystem {
     }
 }
 
-// World management - SOLO CON WORKERS Y TERRENO MINECRAFT
+// World management - CON OPTIMIZED RENDERER
 export class World {
     constructor(scene) {
         this.scene = scene;
@@ -164,6 +165,10 @@ export class World {
         this.frustumCuller = new FrustumCuller();
         this.prioritySystem = new ChunkPrioritySystem();
         this.memoryManager = new MemoryManager();
+        
+        // NUEVO: Sistema de renderizado optimizado
+        this.optimizedRenderer = new OptimizedRenderer(scene);
+        this.useOptimizedRenderer = true; // Flag para activar/desactivar
         
         // Control de carga
         this.chunksToLoad = [];
@@ -178,7 +183,7 @@ export class World {
         // Seed para generación procedural
         this.seed = Math.floor(Math.random() * 1000000);
         
-        Logger.info('[World] World initialized with Minecraft terrain generator (workers only)');
+        Logger.info('[World] World initialized with OptimizedRenderer and Minecraft terrain generator');
     }
     
     initializeWorkers() {
@@ -325,7 +330,97 @@ export class World {
         
         this.processChunkQueue();
         this.unloadDistantChunks(playerChunkX, playerChunkZ, requiredChunks);
+        
+        // NUEVO: Actualizar renderizado optimizado
+        if (this.useOptimizedRenderer) {
+            this.updateOptimizedRendering();
+        }
+        
         this.updateStats();
+    }
+    
+    // NUEVO: Método para actualizar el renderizado optimizado
+    updateOptimizedRendering() {
+        // Comenzar actualización
+        this.optimizedRenderer.beginUpdate();
+        
+        // Procesar todos los chunks cargados
+        for (const key of this.loadedChunks) {
+            const [chunkX, chunkZ] = key.split(',').map(Number);
+            const chunkColumn = this.chunkColumns.get(key);
+            
+            if (chunkColumn && this.frustumCuller.isChunkVisible(chunkX, chunkZ)) {
+                // Procesar cada sub-chunk de la columna
+                for (const [subY, subChunk] of chunkColumn.subChunks) {
+                    if (!subChunk.isEmpty) {
+                        this.addSubChunkToOptimizedRenderer(chunkColumn, subChunk, chunkX, subY, chunkZ);
+                    }
+                }
+            }
+        }
+        
+        // Finalizar actualización y aplicar cambios
+        this.optimizedRenderer.endUpdate();
+    }
+    
+    // NUEVO: Añadir sub-chunk al renderer optimizado
+    addSubChunkToOptimizedRenderer(chunkColumn, subChunk, chunkX, subY, chunkZ) {
+        const size = config.chunkSize;
+        const subHeight = config.subChunkHeight;
+        const worldX = chunkX * size;
+        const worldZ = chunkZ * size;
+        const baseY = subY * subHeight;
+        
+        for (let x = 0; x < size; x++) {
+            for (let y = 0; y < subHeight; y++) {
+                for (let z = 0; z < size; z++) {
+                    const worldY = baseY + y;
+                    const index = x + y * size + z * size * subHeight;
+                    const blockType = subChunk.blocks[index];
+                    
+                    if (blockType === 0) continue; // Skip air
+                    
+                    // Verificar si el bloque es visible
+                    if (this.isBlockVisible(chunkColumn, x, worldY, z)) {
+                        this.optimizedRenderer.addBlock(
+                            blockType,
+                            worldX + x,
+                            worldY,
+                            worldZ + z
+                        );
+                    }
+                }
+            }
+        }
+    }
+    
+    // NUEVO: Verificar si un bloque es visible
+    isBlockVisible(chunkColumn, localX, worldY, localZ) {
+        const directions = [
+            [1, 0, 0], [-1, 0, 0],
+            [0, 1, 0], [0, -1, 0],
+            [0, 0, 1], [0, 0, -1]
+        ];
+        
+        for (const [dx, dy, dz] of directions) {
+            const nx = localX + dx;
+            const ny = worldY + dy;
+            const nz = localZ + dz;
+            
+            // Si está en el borde, considerarlo visible
+            if (nx < 0 || nx >= config.chunkSize ||
+                ny < 0 || ny >= config.worldHeight ||
+                nz < 0 || nz >= config.chunkSize) {
+                return true;
+            }
+            
+            // Si el bloque adyacente es aire, es visible
+            if (chunkColumn.getBlock(nx, ny, nz) === 0) {
+                return true;
+            }
+        }
+        
+        return false;
     }
     
     processChunkQueue() {
@@ -397,7 +492,10 @@ export class World {
         
         const chunkColumn = this.chunkColumns.get(key);
         if (chunkColumn) {
-            chunkColumn.dispose(this.scene);
+            // Si usamos el renderer optimizado, no necesitamos los meshes individuales
+            if (!this.useOptimizedRenderer) {
+                chunkColumn.dispose(this.scene);
+            }
             this.chunkColumns.delete(key);
         }
         
@@ -430,6 +528,13 @@ export class World {
         stats.cullingEfficiency = this.loadedChunks.size > 0 
             ? Math.round((visibleInFrustum / this.loadedChunks.size) * 100)
             : 0;
+        
+        // NUEVO: Estadísticas del renderer optimizado
+        if (this.useOptimizedRenderer) {
+            const rendererStats = this.optimizedRenderer.getStats();
+            stats.totalInstances = rendererStats.totalInstances;
+            stats.drawCalls = rendererStats.meshes;
+        }
     }
 
     getBlockAt(x, y, z) {
@@ -449,9 +554,18 @@ export class World {
         const chunkColumn = this.getChunkColumn(chunkX, chunkZ);
         if (chunkColumn) {
             chunkColumn.setBlock(localX, worldY, localZ, type);
-            chunkColumn.updateAllDirtyMeshes(scene);
+            
+            // Si no usamos el renderer optimizado, actualizar meshes normales
+            if (!this.useOptimizedRenderer) {
+                chunkColumn.updateAllDirtyMeshes(scene);
+            }
             
             this.updateNeighborChunks(chunkX, chunkZ, localX, localZ, scene);
+            
+            // Si usamos el renderer optimizado, forzar actualización
+            if (this.useOptimizedRenderer) {
+                this.updateOptimizedRendering();
+            }
         }
     }
     
@@ -467,13 +581,39 @@ export class World {
             const key = this.getChunkKey(cx, cz);
             if (this.loadedChunks.has(key)) {
                 const column = this.chunkColumns.get(key);
-                if (column) column.updateAllDirtyMeshes(scene);
+                if (column && !this.useOptimizedRenderer) {
+                    column.updateAllDirtyMeshes(scene);
+                }
+            }
+        }
+    }
+    
+    // NUEVO: Toggle para activar/desactivar el renderer optimizado
+    toggleOptimizedRenderer(enabled) {
+        this.useOptimizedRenderer = enabled;
+        
+        if (enabled) {
+            Logger.info('[World] Switching to OptimizedRenderer');
+            // Ocultar meshes individuales
+            for (const chunkColumn of this.chunkColumns.values()) {
+                chunkColumn.hideAllMeshes();
+            }
+            // Actualizar renderer optimizado
+            this.updateOptimizedRendering();
+        } else {
+            Logger.info('[World] Switching to standard renderer');
+            // Ocultar meshes optimizados
+            this.optimizedRenderer.beginUpdate();
+            this.optimizedRenderer.endUpdate();
+            // Mostrar meshes individuales
+            for (const chunkColumn of this.chunkColumns.values()) {
+                chunkColumn.showAllMeshes();
             }
         }
     }
     
     getStats() {
-        return {
+        const baseStats = {
             chunksLoaded: this.loadedChunks.size,
             chunksLoading: this.loadingChunks.size,
             chunksQueued: this.chunksToLoad.length,
@@ -481,8 +621,17 @@ export class World {
             workerEnabled: this.workerManager ? this.workerManager.isEnabled() : false,
             workerStats: this.workerManager ? this.workerManager.getStats() : null,
             memory: this.memoryManager.getStats(),
-            cullingEfficiency: stats.cullingEfficiency + '%'
+            cullingEfficiency: stats.cullingEfficiency + '%',
+            optimizedRenderer: this.useOptimizedRenderer
         };
+        
+        // Añadir estadísticas del renderer optimizado si está activo
+        if (this.useOptimizedRenderer) {
+            const rendererStats = this.optimizedRenderer.getStats();
+            baseStats.rendererStats = rendererStats;
+        }
+        
+        return baseStats;
     }
     
     dispose() {
@@ -490,6 +639,12 @@ export class World {
         
         this.frustumCuller.dispose();
         this.memoryManager.dispose();
+        
+        // NUEVO: Dispose del renderer optimizado
+        if (this.optimizedRenderer) {
+            this.optimizedRenderer.dispose();
+            this.optimizedRenderer = null;
+        }
         
         if (this.workerManager) {
             this.workerManager.dispose();
